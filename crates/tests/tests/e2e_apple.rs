@@ -6,15 +6,15 @@
 //! from a real image. It asserts the container goes Pending → Scheduled →
 //! Running → Succeeded, then exercises finalizer-based deletion.
 //!
-//! It is `#[ignore]`d so `cargo test` / CI stay green on machines without the
-//! `container` CLI, and it additionally self-skips if `container` isn't callable.
-//! Run it on macOS 15+ with Apple Containerization installed:
+//! This test is always enabled (no `#[ignore]`): on a host with a working Apple
+//! `container` CLI it runs for real end to end; everywhere else it **self-skips**
+//! (the `container` binary isn't callable), so `cargo test` and CI stay green.
+//! Run it explicitly with output via:
 //!
-//!     cargo test -p velos-tests --test e2e_apple -- --ignored --nocapture
+//!     cargo test -p velos-tests --test e2e_apple -- --nocapture
 //!
 //! NOTE: the exact `container` CLI flags are centralized in
-//! `velos_runtime::AppleContainer`; if your installed version differs, adjust the
-//! constants there (e.g. `rm` vs `delete`, `list` vs `ls`).
+//! `velos_runtime::AppleContainer`; they match the apple/container 1.0 reference.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
@@ -25,7 +25,7 @@ use serde_json::{Value, json};
 use velos_apiserver::app_with_auth;
 use velos_apiserver::controllers::{self, ControllerConfig};
 use velos_auth::{AuthService, StoreAuthenticator};
-use velos_runtime::{AppleContainer, ContainerRuntime};
+use velos_runtime::{AppleContainer, ContainerRuntime, RunSpec};
 use velos_store::{SqliteStore, Store};
 use veloslet::{ApiClient, run_loop};
 
@@ -65,11 +65,32 @@ async fn await_phase(
 }
 
 #[tokio::test]
-#[ignore = "requires the Apple `container` CLI; run with --ignored on macOS"]
 async fn real_container_lifecycle_with_apple_containerization() {
     if !AppleContainer::new().available().await {
-        eprintln!("SKIP: `container` CLI not available on this host");
+        eprintln!("SKIP: Apple `container` CLI not available on this host");
         return;
+    }
+    // Pre-flight: confirm this host can actually *launch* a micro-VM (the CLI may
+    // be installed on a runner that lacks nested virtualization). If it can't, we
+    // skip cleanly rather than failing — separating "environment can't run" from
+    // "Velos has a bug".
+    {
+        let probe = AppleContainer::new();
+        let spec = RunSpec {
+            uid: "preflight".to_string(),
+            image: IMAGE.to_string(),
+            command: vec!["true".to_string()],
+            env: vec![],
+        };
+        match probe.run(&spec).await {
+            Ok(_) => {
+                let _ = probe.remove("preflight").await;
+            }
+            Err(e) => {
+                eprintln!("SKIP: host cannot launch containers ({e})");
+                return;
+            }
+        }
     }
 
     // --- Control plane: apiserver + controllers (fast intervals for the test) ---

@@ -32,3 +32,35 @@ jobs:
 
       - name: Test
         run: cargo test --workspace
+
+  e2e-apple:
+    name: e2e (Apple Containerization)
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install Apple container CLI
+        run: |
+          set -euo pipefail
+          url=$(gh api repos/apple/container/releases/latest \
+            --jq '.assets[] | select(.name | endswith("installer-signed.pkg")) | .browser_download_url')
+          curl -fL -o /tmp/container.pkg "$url"
+          sudo installer -pkg /tmp/container.pkg -target /
+          echo "/usr/local/bin" >> "$GITHUB_PATH"
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Start container service
+        run: container system start || true
+
+      # The Apple e2e self-skips if this runner can't launch micro-VMs
+      # (GitHub-hosted macOS lacks nested virtualization); it runs for real on a
+      # self-hosted Apple-silicon runner. The rest of the suite always runs.
+      - name: Test
+        run: cargo test --workspace -- --nocapture

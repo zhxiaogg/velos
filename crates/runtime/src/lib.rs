@@ -5,6 +5,10 @@
 //! fake without touching the worker's reconcile logic. Every instance is keyed by
 //! its Velos container **uid**, which makes actuation idempotent: reconcile after a
 //! crash matches existing instances by uid before launching.
+//!
+//! Backends today: [`AppleContainer`] (real) and [`FakeRuntime`] (tests). A Linux
+//! backend (e.g. via `podman`/`runc` or a `libkrun` micro-VM) is the planned next
+//! addition behind this same trait — tracked separately, not in this change.
 
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -144,16 +148,17 @@ impl ContainerRuntime for FakeRuntime {
 //
 //   run     : `container run --detach --name velos-<uid> [--env K=V ...] <image> [cmd...]`
 //   stop    : `container stop velos-<uid>`
-//   remove  : `container rm velos-<uid>`
+//   remove  : `container delete --force velos-<uid>`
 //   list    : `container list --all --format json`
 //   version : `container --version`
 //
-// If your installed `container` differs (e.g. `delete` instead of `rm`, or
-// `ls` instead of `list`), adjust these constants.
+// These match the apple/container 1.0 command reference (`delete` has alias
+// `rm`, `list` has alias `ls`). If your installed version differs, this is the
+// one place to adjust.
 
 const SUBCMD_RUN: &str = "run";
 const SUBCMD_STOP: &str = "stop";
-const SUBCMD_REMOVE: &str = "rm";
+const SUBCMD_REMOVE: &str = "delete";
 const SUBCMD_LIST: &str = "list";
 /// Prefix applied to a uid to form the runtime instance name.
 const NAME_PREFIX: &str = "velos-";
@@ -239,8 +244,12 @@ impl ContainerRuntime for AppleContainer {
     }
 
     async fn remove(&self, uid: &str) -> Result<(), RuntimeError> {
-        self.output_best_effort(&[SUBCMD_REMOVE.to_string(), instance_name(uid)])
-            .await;
+        self.output_best_effort(&[
+            SUBCMD_REMOVE.to_string(),
+            "--force".to_string(),
+            instance_name(uid),
+        ])
+        .await;
         Ok(())
     }
 
