@@ -19,6 +19,9 @@ path = "src/main.rs"
 velos-store = { path = "../store" }
 axum = "0.7"
 tokio = { version = "1", features = ["full"] }
+futures = "0.3"
+async-stream = "0.3"
+serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 uuid = { version = "1", features = ["v4"] }
 chrono = { version = "0.4" }
