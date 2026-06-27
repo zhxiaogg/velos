@@ -22,8 +22,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
-use velos_apiserver::controllers::{self, ControllerConfig};
 use velos_apiserver::app_with_auth;
+use velos_apiserver::controllers::{self, ControllerConfig};
 use velos_auth::{AuthService, StoreAuthenticator};
 use velos_runtime::{AppleContainer, ContainerRuntime};
 use velos_store::{SqliteStore, Store};
@@ -203,7 +203,10 @@ async fn real_container_lifecycle_with_apple_containerization() {
         if resp.status() == reqwest::StatusCode::NOT_FOUND {
             break;
         }
-        assert!(Instant::now() < deadline, "container was never hard-deleted");
+        assert!(
+            Instant::now() < deadline,
+            "container was never hard-deleted"
+        );
         tokio::time::sleep(Duration::from_millis(500)).await;
     }
 }

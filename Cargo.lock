@@ -1740,6 +1740,7 @@ dependencies = [
  "serde_json",
  "tokio",
  "velos-apiserver",
+ "velos-auth",
  "velos-runtime",
  "velos-store",
  "veloslet",
