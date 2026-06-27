@@ -82,12 +82,18 @@ async fn real_container_lifecycle_with_apple_containerization() {
             command: vec!["true".to_string()],
             env: vec![],
         };
-        match probe.run(&spec).await {
-            Ok(_) => {
+        // Time-bound the probe so a runner that has the CLI but can't virtualize
+        // skips quickly instead of hanging CI.
+        match tokio::time::timeout(Duration::from_secs(120), probe.run(&spec)).await {
+            Ok(Ok(_)) => {
                 let _ = probe.remove("preflight").await;
             }
-            Err(e) => {
+            Ok(Err(e)) => {
                 eprintln!("SKIP: host cannot launch containers ({e})");
+                return;
+            }
+            Err(_) => {
+                eprintln!("SKIP: container launch timed out; host likely cannot virtualize");
                 return;
             }
         }
