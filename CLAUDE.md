@@ -1,7 +1,7 @@
-# Fleet — Engineering Guidelines
+# Velos — Engineering Guidelines
 
-Fleet is a Kubernetes-style control plane that manages the lifecycle of containers
-(Apple Containerization micro-VMs) on a fleet of registered remote macOS workers,
+Velos is a Kubernetes-style control plane that manages the lifecycle of containers
+(Apple Containerization micro-VMs) on a pool of registered remote macOS workers,
 exposed over a RESTful API.
 
 These principles are adopted from the `zhxiaogg/hackamore` project and are the
@@ -56,13 +56,13 @@ conflict.
 
 - Use [fluorite](https://github.com/zhxiaogg/fluorite) to generate all protocol /
   wire types — anything transported between modules or between server and clients.
-- Define schemas as `.fl` files under `crates/fleet-models/fluorite/` (inside the
+- Define schemas as `.fl` files under `crates/models/fluorite/` (inside the
   models crate, so the crate is self-contained).
-- `fleet-models` runs `fluorite_codegen` in `build.rs` and exposes generated types
-  via `fleet_models::<package>::*`.
+- `velos-models` runs `fluorite_codegen` in `build.rs` and exposes generated types
+  via `velos_models::<package>::*`.
 - Generated types derive `Debug`, `Clone`, `PartialEq`, `Serialize`, `Deserialize`,
   `JsonSchema` (the `schemars` derive feeds the OpenAPI document).
-- Add hand-written convenience constructors/methods in `crates/fleet-models/src/lib.rs`
+- Add hand-written convenience constructors/methods in `crates/models/src/lib.rs`
   (not in the schema).
 - fluorite is a pure data-type IDL: it does not describe REST endpoints. Resource
   *types* live in `.fl`; the REST routing is hand-written (axum).
@@ -83,6 +83,11 @@ wildcard_enum_match_arm = "deny"
 
 Test code opts out per-file with `#![cfg_attr(test, allow(...))]`.
 
+Formatting follows `rustfmt.toml` (edition 2024 style; reused from `zhxiaogg/horsie`).
+Some options (`imports_granularity`, `wrap_comments`, …) are nightly-only and are
+ignored by stable `rustfmt` — they document intended style; `make check` enforces the
+stable subset.
+
 Error handling: `thiserror` for typed library errors at boundaries; `anyhow` in
 binaries. No `unwrap`/`expect`/`panic` in production code (lint-enforced).
 
@@ -91,7 +96,7 @@ binaries. No `unwrap`/`expect`/`panic` in production code (lint-enforced).
 - Unit tests live alongside source under `#[cfg(test)] mod tests` in the same `.rs`
   file.
 - Full-stack end-to-end tests (spin up the apiserver + a fake `ContainerRuntime`) go
-  in the `fleet-tests` crate.
+  in the `velos-tests` crate.
 
 ## Development Workflow
 

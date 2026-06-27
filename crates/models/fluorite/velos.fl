@@ -1,0 +1,103 @@
+package velos;
+
+struct ObjectMeta {
+    name: String,
+    uid: Uuid,
+    labels: Map<String, String>,
+    annotations: Map<String, String>,
+    resource_version: u64,
+    creation_timestamp: DateTimeUtc,
+    deletion_timestamp: Option<DateTimeUtc>,
+    finalizers: Vec<String>,
+}
+
+enum ContainerPhase {
+    Pending,
+    Scheduled,
+    Running,
+    Succeeded,
+    Failed,
+    Unknown,
+}
+
+enum RestartPolicy {
+    Never,
+    OnFailure,
+    Always,
+}
+
+struct ResourceReqs {
+    cpu: u32,
+    memory_bytes: u64,
+}
+
+struct ContainerSpec {
+    image: String,
+    command: Vec<String>,
+    env: Map<String, String>,
+    resources: ResourceReqs,
+    restart_policy: RestartPolicy,
+    node_name: Option<String>,
+}
+
+struct ContainerStatus {
+    phase: ContainerPhase,
+    worker_name: Option<String>,
+    container_id: Option<String>,
+    started_at: Option<DateTimeUtc>,
+    finished_at: Option<DateTimeUtc>,
+    exit_code: Option<i32>,
+    message: Option<String>,
+}
+
+struct Container {
+    metadata: ObjectMeta,
+    spec: ContainerSpec,
+    status: ContainerStatus,
+}
+
+struct NodeResources {
+    cpu: u32,
+    memory_bytes: u64,
+    max_containers: u32,
+}
+
+enum NodeConditionType {
+    Ready,
+}
+
+struct NodeCondition {
+    condition_type: NodeConditionType,
+    status: bool,
+    last_transition_time: DateTimeUtc,
+    reason: String,
+}
+
+struct WorkerSpec {
+    unschedulable: bool,
+}
+
+struct WorkerStatus {
+    capacity: NodeResources,
+    allocatable: NodeResources,
+    conditions: Vec<NodeCondition>,
+    addresses: Vec<String>,
+    container_runtime_version: String,
+}
+
+struct Worker {
+    metadata: ObjectMeta,
+    spec: WorkerSpec,
+    status: WorkerStatus,
+}
+
+struct LeaseSpec {
+    holder_identity: String,
+    renew_time: DateTimeUtc,
+    lease_duration_seconds: u32,
+}
+
+struct Lease {
+    metadata: ObjectMeta,
+    spec: LeaseSpec,
+}

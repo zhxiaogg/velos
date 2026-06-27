@@ -1,0 +1,16 @@
+[workspace]
+resolver = "2"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+authors = ["xiaoguang <zhxiaog@outlook.com>"]
+repository = "https://github.com/zhxiaogg/sandbox"
+
+[workspace.lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+wildcard_enum_match_arm = "deny"
