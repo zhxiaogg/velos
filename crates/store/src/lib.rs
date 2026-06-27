@@ -180,10 +180,10 @@ impl Store for SqliteStore {
         let mut out = Vec::new();
         for r in raw {
             let (name, uid_s, rv, node_name, labels_s, document_s) = r?;
-            if let Some(want) = &selector.node_name {
-                if node_name.as_deref() != Some(want.as_str()) {
-                    continue;
-                }
+            if let Some(want) = &selector.node_name
+                && node_name.as_deref() != Some(want.as_str())
+            {
+                continue;
             }
             let labels: HashMap<String, String> = serde_json::from_str(&labels_s)?;
             let matches = selector

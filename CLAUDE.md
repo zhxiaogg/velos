@@ -83,6 +83,11 @@ wildcard_enum_match_arm = "deny"
 
 Test code opts out per-file with `#![cfg_attr(test, allow(...))]`.
 
+Formatting follows `rustfmt.toml` (edition 2024 style; reused from `zhxiaogg/horsie`).
+Some options (`imports_granularity`, `wrap_comments`, …) are nightly-only and are
+ignored by stable `rustfmt` — they document intended style; `make check` enforces the
+stable subset.
+
 Error handling: `thiserror` for typed library errors at boundaries; `anyhow` in
 binaries. No `unwrap`/`expect`/`panic` in production code (lint-enforced).
 

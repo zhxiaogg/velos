@@ -6,11 +6,11 @@
 
 **Architecture:** A Rust crate workspace. `velos-models` generates wire types from fluorite `.fl` schemas. `velos-store` persists objects as opaque JSON documents plus index columns behind a `Store` trait (SQLite impl). `velos-apiserver` is an axum service exposing CRUD + a status subresource + label/field selectors, treating objects as opaque JSON (typed admission is a later phase). Watch, controllers, the worker daemon, and auth are out of scope for this phase.
 
-**Tech Stack:** Rust (edition 2021), tokio, axum 0.7, rusqlite (bundled SQLite), serde / serde_json, fluorite (codegen 0.6.1), uuid, chrono, thiserror, anyhow, tracing.
+**Tech Stack:** Rust (edition 2024), tokio, axum 0.7, rusqlite (bundled SQLite), serde / serde_json, fluorite (codegen 0.6.1), uuid, chrono, thiserror, anyhow, tracing.
 
 ## Global Constraints
 
-- Rust edition: **2021**; stable toolchain.
+- Rust edition: **2024**; stable toolchain.
 - Workspace clippy lints — **deny**: `clippy::unwrap_used`, `clippy::expect_used`, `clippy::panic`, `clippy::wildcard_enum_match_arm`. Production code must not use `unwrap`/`expect`/`panic`. Test modules opt out with `#[allow(clippy::unwrap_used)]` (and friends) on the `#[cfg(test)] mod tests` block.
 - Error handling: `thiserror` for library error types; `anyhow` in binaries and build scripts.
 - **fluorite is for wire/protocol types only.** Never persist fluorite-generated structs as storage rows — the store uses its own hand-written `StoredObject`. (Principle #7 in `CLAUDE.md`.)
@@ -79,7 +79,7 @@ members = ["crates/*"]
 
 [workspace.package]
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 license = "MIT"
 authors = ["xiaoguang <zhxiaog@outlook.com>"]
 repository = "https://github.com/zhxiaogg/velos"
