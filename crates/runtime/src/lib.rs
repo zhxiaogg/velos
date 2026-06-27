@@ -135,9 +135,32 @@ impl ContainerRuntime for FakeRuntime {
 // ---------------------------------------------------------------------------
 // AppleContainer — wraps the `container` CLI (Apple Containerization).
 // ---------------------------------------------------------------------------
+//
+// Every instance is addressed by a derived **name** `velos-<uid>` (Apple's
+// `container` supports `--name` and name-based addressing universally, so this
+// avoids depending on label support). All `container` CLI assumptions are
+// gathered in the constants below so they can be matched to the installed
+// version in one place:
+//
+//   run     : `container run --detach --name velos-<uid> [--env K=V ...] <image> [cmd...]`
+//   stop    : `container stop velos-<uid>`
+//   remove  : `container rm velos-<uid>`
+//   list    : `container list --all --format json`
+//   version : `container --version`
+//
+// If your installed `container` differs (e.g. `delete` instead of `rm`, or
+// `ls` instead of `list`), adjust these constants.
 
-/// Label key used to tag every instance with its Velos uid.
-const UID_LABEL: &str = "velos.uid";
+const SUBCMD_RUN: &str = "run";
+const SUBCMD_STOP: &str = "stop";
+const SUBCMD_REMOVE: &str = "rm";
+const SUBCMD_LIST: &str = "list";
+/// Prefix applied to a uid to form the runtime instance name.
+const NAME_PREFIX: &str = "velos-";
+
+fn instance_name(uid: &str) -> String {
+    format!("{NAME_PREFIX}{uid}")
+}
 
 /// Real backend: shells out to the `container` CLI via `tokio::process`.
 pub struct AppleContainer {
@@ -162,6 +185,12 @@ impl AppleContainer {
         Self { bin: bin.into() }
     }
 
+    /// Whether the configured `container` binary is callable. Used by tests and
+    /// callers to skip gracefully when Apple Containerization isn't installed.
+    pub async fn available(&self) -> bool {
+        self.output(&["--version".to_string()]).await.is_ok()
+    }
+
     async fn output(&self, args: &[String]) -> Result<String, RuntimeError> {
         let out = tokio::process::Command::new(&self.bin)
             .args(args)
@@ -175,16 +204,23 @@ impl AppleContainer {
         }
         Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
     }
+
+    /// Run a command, swallowing failures (used for idempotent stop/remove where
+    /// "no such container" is an acceptable outcome).
+    async fn output_best_effort(&self, args: &[String]) {
+        let _ = self.output(args).await;
+    }
 }
 
 #[async_trait]
 impl ContainerRuntime for AppleContainer {
     async fn run(&self, spec: &RunSpec) -> Result<InstanceId, RuntimeError> {
+        let name = instance_name(&spec.uid);
         let mut args = vec![
-            "run".to_string(),
+            SUBCMD_RUN.to_string(),
             "--detach".to_string(),
-            "--label".to_string(),
-            format!("{UID_LABEL}={}", spec.uid),
+            "--name".to_string(),
+            name.clone(),
         ];
         for (k, v) in &spec.env {
             args.push("--env".to_string());
@@ -192,36 +228,32 @@ impl ContainerRuntime for AppleContainer {
         }
         args.push(spec.image.clone());
         args.extend(spec.command.iter().cloned());
-        let id = self.output(&args).await?;
-        Ok(InstanceId(id))
+        self.output(&args).await?;
+        Ok(InstanceId(name))
     }
 
     async fn stop(&self, uid: &str) -> Result<(), RuntimeError> {
-        // Best-effort: ignore "no such container" by mapping a failure to Ok only
-        // when nothing matched. We resolve the runtime id from the uid label.
-        if let Some(inst) = self.find(uid).await? {
-            self.output(&["stop".to_string(), inst.id.0]).await?;
-        }
+        self.output_best_effort(&[SUBCMD_STOP.to_string(), instance_name(uid)])
+            .await;
         Ok(())
     }
 
     async fn remove(&self, uid: &str) -> Result<(), RuntimeError> {
-        if let Some(inst) = self.find(uid).await? {
-            self.output(&["rm".to_string(), inst.id.0]).await?;
-        }
+        self.output_best_effort(&[SUBCMD_REMOVE.to_string(), instance_name(uid)])
+            .await;
         Ok(())
     }
 
     async fn list(&self) -> Result<Vec<Instance>, RuntimeError> {
         let raw = self
             .output(&[
-                "ls".to_string(),
+                SUBCMD_LIST.to_string(),
                 "--all".to_string(),
                 "--format".to_string(),
                 "json".to_string(),
             ])
             .await?;
-        parse_ls(&raw)
+        parse_list(&raw)
     }
 
     async fn version(&self) -> Result<String, RuntimeError> {
@@ -229,15 +261,27 @@ impl ContainerRuntime for AppleContainer {
     }
 }
 
-impl AppleContainer {
-    async fn find(&self, uid: &str) -> Result<Option<Instance>, RuntimeError> {
-        Ok(self.list().await?.into_iter().find(|i| i.uid == uid))
+/// Read the first present string field among `keys`, descending one level into
+/// an array's first element if the field is an array (e.g. `names: [..]`).
+fn field_str<'a>(entry: &'a serde_json::Value, keys: &[&str]) -> Option<&'a str> {
+    for k in keys {
+        match entry.get(k) {
+            Some(serde_json::Value::String(s)) => return Some(s),
+            Some(serde_json::Value::Array(a)) => {
+                if let Some(serde_json::Value::String(s)) = a.first() {
+                    return Some(s);
+                }
+            }
+            _ => {}
+        }
     }
+    None
 }
 
-/// Parse `container ls --format json` into uid-tagged instances. Entries without
-/// the velos uid label are ignored (not ours).
-fn parse_ls(raw: &str) -> Result<Vec<Instance>, RuntimeError> {
+/// Parse `container list --format json` into our uid-keyed instances. Entries
+/// whose name lacks the `velos-` prefix are ignored (not ours). Field names are
+/// matched tolerantly to survive minor CLI schema differences.
+fn parse_list(raw: &str) -> Result<Vec<Instance>, RuntimeError> {
     if raw.is_empty() {
         return Ok(Vec::new());
     }
@@ -246,29 +290,27 @@ fn parse_ls(raw: &str) -> Result<Vec<Instance>, RuntimeError> {
     let arr = value.as_array().cloned().unwrap_or_default();
     let mut out = Vec::new();
     for entry in arr {
-        let uid = entry
-            .pointer("/labels")
-            .and_then(|l| l.get(UID_LABEL))
-            .and_then(|v| v.as_str());
-        let Some(uid) = uid else { continue };
-        let id = entry
-            .get("id")
-            .and_then(|v| v.as_str())
-            .unwrap_or(uid)
-            .to_string();
-        let status = entry
-            .get("status")
-            .and_then(|v| v.as_str())
-            .unwrap_or("unknown");
-        let state = match status {
-            "running" => InstanceState::Running,
-            _ => InstanceState::Exited {
-                exit_code: entry.get("exitCode").and_then(|v| v.as_i64()).unwrap_or(0) as i32,
-            },
+        let Some(name) = field_str(&entry, &["name", "names", "id"]) else {
+            continue;
+        };
+        let Some(uid) = name.strip_prefix(NAME_PREFIX) else {
+            continue;
+        };
+        let status = field_str(&entry, &["status", "state"]).unwrap_or("unknown");
+        let running = status.eq_ignore_ascii_case("running");
+        let state = if running {
+            InstanceState::Running
+        } else {
+            let exit_code = entry
+                .get("exitCode")
+                .or_else(|| entry.get("exit_code"))
+                .and_then(|v| v.as_i64())
+                .unwrap_or(0) as i32;
+            InstanceState::Exited { exit_code }
         };
         out.push(Instance {
             uid: uid.to_string(),
-            id: InstanceId(id),
+            id: InstanceId(name.to_string()),
             state,
         });
     }
@@ -306,17 +348,19 @@ mod tests {
     }
 
     #[test]
-    fn parse_ls_filters_to_velos_instances() {
+    fn parse_list_filters_to_velos_instances_by_name_prefix() {
+        // Mixed schema shapes: `name` vs `names[]`, `status` vs `state`.
         let raw = r#"[
-            {"id":"abc","status":"running","labels":{"velos.uid":"u1"}},
-            {"id":"def","status":"stopped","labels":{"velos.uid":"u2"},"exitCode":2},
-            {"id":"ghi","status":"running","labels":{"other":"x"}}
+            {"name":"velos-u1","status":"running"},
+            {"names":["velos-u2"],"state":"stopped","exitCode":2},
+            {"name":"someone-elses","status":"running"}
         ]"#;
-        let mut got = parse_ls(raw).unwrap();
+        let mut got = parse_list(raw).unwrap();
         got.sort_by(|a, b| a.uid.cmp(&b.uid));
         assert_eq!(got.len(), 2);
         assert_eq!(got[0].uid, "u1");
         assert_eq!(got[0].state, InstanceState::Running);
+        assert_eq!(got[1].uid, "u2");
         assert_eq!(got[1].state, InstanceState::Exited { exit_code: 2 });
     }
 }
