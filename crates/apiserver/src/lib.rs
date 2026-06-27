@@ -4,6 +4,8 @@
 //! (`metadata.name`, `metadata.labels`, `spec.nodeName`) are interpreted.
 //! Typed admission against `velos-models` is a later phase.
 
+pub mod controllers;
+
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
