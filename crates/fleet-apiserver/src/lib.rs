@@ -7,7 +7,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
@@ -15,7 +15,7 @@ use axum::{Json, Router};
 use serde_json::Value;
 use uuid::Uuid;
 
-use fleet_store::{Store, StoredObject};
+use fleet_store::{Selector, Store, StoredObject};
 
 #[derive(Clone)]
 struct AppState {
@@ -96,6 +96,33 @@ fn stamp_meta(doc: &mut Value, uid: &Uuid, rv: u64) {
     }
 }
 
+fn parse_selector(params: &HashMap<String, String>) -> Result<Selector, ApiError> {
+    let mut sel = Selector::default();
+    if let Some(ls) = params.get("labelSelector") {
+        for pair in ls.split(',').filter(|s| !s.is_empty()) {
+            let (k, v) = pair
+                .split_once('=')
+                .ok_or_else(|| ApiError::BadRequest(format!("bad labelSelector: {pair}")))?;
+            sel.labels.push((k.to_string(), v.to_string()));
+        }
+    }
+    if let Some(fs) = params.get("fieldSelector") {
+        for pair in fs.split(',').filter(|s| !s.is_empty()) {
+            let (k, v) = pair
+                .split_once('=')
+                .ok_or_else(|| ApiError::BadRequest(format!("bad fieldSelector: {pair}")))?;
+            if k == "spec.nodeName" {
+                sel.node_name = Some(v.to_string());
+            } else {
+                return Err(ApiError::BadRequest(format!(
+                    "unsupported fieldSelector: {k}"
+                )));
+            }
+        }
+    }
+    Ok(sel)
+}
+
 async fn create(
     State(state): State<AppState>,
     Path(plural): Path<String>,
@@ -133,10 +160,22 @@ async fn get_one(
     Ok(Json(obj.document))
 }
 
+async fn list(
+    State(state): State<AppState>,
+    Path(plural): Path<String>,
+    Query(params): Query<HashMap<String, String>>,
+) -> Result<Json<Value>, ApiError> {
+    let kind = kind_for(&plural).ok_or(ApiError::NotFound)?;
+    let selector = parse_selector(&params)?;
+    let objs = state.store.list(kind, &selector)?;
+    let items: Vec<Value> = objs.into_iter().map(|o| o.document).collect();
+    Ok(Json(serde_json::json!({ "items": items })))
+}
+
 pub fn app(store: Arc<dyn Store>) -> Router {
     let state = AppState { store };
     Router::new()
-        .route("/api/v1/:plural", post(create))
+        .route("/api/v1/:plural", post(create).get(list))
         .route("/api/v1/:plural/:name", get(get_one))
         .with_state(state)
 }
@@ -218,6 +257,92 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    async fn post(app: &axum::Router, plural: &str, body: serde_json::Value) {
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/api/v1/{plural}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::CREATED);
+    }
+
+    #[tokio::test]
+    async fn list_returns_items_and_honors_selectors() {
+        let app = test_app();
+        post(
+            &app,
+            "containers",
+            serde_json::json!({
+                "metadata": { "name": "c1", "labels": { "team": "a" } },
+                "spec": { "image": "img", "nodeName": "node-7" }
+            }),
+        )
+        .await;
+        post(
+            &app,
+            "containers",
+            serde_json::json!({
+                "metadata": { "name": "c2", "labels": { "team": "b" } },
+                "spec": { "image": "img", "nodeName": "node-8" }
+            }),
+        )
+        .await;
+
+        // list all
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/api/v1/containers")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let all = body_json(resp).await;
+        assert_eq!(all["items"].as_array().unwrap().len(), 2);
+
+        // label selector
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/api/v1/containers?labelSelector=team=a")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let filtered = body_json(resp).await;
+        assert_eq!(filtered["items"].as_array().unwrap().len(), 1);
+        assert_eq!(filtered["items"][0]["metadata"]["name"], "c1");
+
+        // field selector
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/api/v1/containers?fieldSelector=spec.nodeName=node-8")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let by_node = body_json(resp).await;
+        assert_eq!(by_node["items"].as_array().unwrap().len(), 1);
+        assert_eq!(by_node["items"][0]["metadata"]["name"], "c2");
     }
 
     #[tokio::test]
