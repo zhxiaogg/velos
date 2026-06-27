@@ -1,10 +1,10 @@
-# Fleet Phase 1 — Control-Plane Spine Implementation Plan
+# Velos Phase 1 — Control-Plane Spine Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Build a working single-node control plane that stores resources in SQLite and serves full CRUD over a Kubernetes-shaped REST API, with the fluorite-generated wire types in place.
 
-**Architecture:** A Rust crate workspace. `fleet-models` generates wire types from fluorite `.fl` schemas. `fleet-store` persists objects as opaque JSON documents plus index columns behind a `Store` trait (SQLite impl). `fleet-apiserver` is an axum service exposing CRUD + a status subresource + label/field selectors, treating objects as opaque JSON (typed admission is a later phase). Watch, controllers, the worker daemon, and auth are out of scope for this phase.
+**Architecture:** A Rust crate workspace. `velos-models` generates wire types from fluorite `.fl` schemas. `velos-store` persists objects as opaque JSON documents plus index columns behind a `Store` trait (SQLite impl). `velos-apiserver` is an axum service exposing CRUD + a status subresource + label/field selectors, treating objects as opaque JSON (typed admission is a later phase). Watch, controllers, the worker daemon, and auth are out of scope for this phase.
 
 **Tech Stack:** Rust (edition 2021), tokio, axum 0.7, rusqlite (bundled SQLite), serde / serde_json, fluorite (codegen 0.6.1), uuid, chrono, thiserror, anyhow, tracing.
 
@@ -24,32 +24,32 @@
 ## File Structure
 
 ```
-fleet/ (repo root = /Users/xiaoguang/work/repo/personal/sandbox)
+velos/ (repo root = /Users/xiaoguang/work/repo/personal/sandbox)
 ├── Cargo.toml                         # workspace: members, workspace.package, workspace.lints
 ├── Makefile                           # make check / build / test / fmt / clippy / run
 ├── rust-toolchain.toml                # stable
 ├── .gitignore                         # /target, *.db
 ├── CLAUDE.md                          # (already present) design principles
 └── crates/
-    ├── fleet-models/
+    ├── models/
     │   ├── Cargo.toml
     │   ├── build.rs                   # runs fluorite_codegen
     │   ├── fluorite/
-    │   │   └── fleet.fl               # all v1 resource wire types
+    │   │   └── velos.fl               # all v1 resource wire types
     │   └── src/lib.rs                 # include! generated code + convenience ctors + round-trip test
-    ├── fleet-store/
+    ├── store/
     │   ├── Cargo.toml
     │   └── src/lib.rs                 # Store trait, Selector, StoredObject, StoreError, SqliteStore
-    └── fleet-apiserver/
+    └── apiserver/
         ├── Cargo.toml
         ├── src/lib.rs                 # Router builder, handlers, ApiError, selector parsing
         └── src/main.rs                # binary: bind TCP + axum::serve
 ```
 
 Responsibilities:
-- **`fleet-models`** — the single source of truth for wire types; depends on nothing else in the workspace.
-- **`fleet-store`** — generic, schema-agnostic persistence; knows nothing about HTTP or specific resource kinds.
-- **`fleet-apiserver`** — HTTP surface; depends on `fleet-store`. Treats objects as opaque `serde_json::Value`, extracting only the indexed envelope fields (`metadata.name`, `metadata.labels`, `spec.nodeName`).
+- **`velos-models`** — the single source of truth for wire types; depends on nothing else in the workspace.
+- **`velos-store`** — generic, schema-agnostic persistence; knows nothing about HTTP or specific resource kinds.
+- **`velos-apiserver`** — HTTP surface; depends on `velos-store`. Treats objects as opaque `serde_json::Value`, extracting only the indexed envelope fields (`metadata.name`, `metadata.labels`, `spec.nodeName`).
 
 ---
 
@@ -60,9 +60,9 @@ Responsibilities:
 - Create: `Makefile`
 - Create: `rust-toolchain.toml`
 - Create: `.gitignore`
-- Create: `crates/fleet-models/Cargo.toml`, `crates/fleet-models/src/lib.rs`
-- Create: `crates/fleet-store/Cargo.toml`, `crates/fleet-store/src/lib.rs`
-- Create: `crates/fleet-apiserver/Cargo.toml`, `crates/fleet-apiserver/src/lib.rs`
+- Create: `crates/models/Cargo.toml`, `crates/models/src/lib.rs`
+- Create: `crates/store/Cargo.toml`, `crates/store/src/lib.rs`
+- Create: `crates/apiserver/Cargo.toml`, `crates/apiserver/src/lib.rs`
 
 **Interfaces:**
 - Consumes: nothing.
@@ -82,7 +82,7 @@ version = "0.1.0"
 edition = "2021"
 license = "MIT"
 authors = ["xiaoguang <zhxiaog@outlook.com>"]
-repository = "https://github.com/zhxiaogg/fleet"
+repository = "https://github.com/zhxiaogg/velos"
 
 [workspace.lints.clippy]
 unwrap_used = "deny"
@@ -128,15 +128,15 @@ check:
 	cargo test --workspace
 
 run:
-	cargo run -p fleet-apiserver
+	cargo run -p velos-apiserver
 ```
 
 - [ ] **Step 3: Create the three crate stubs**
 
-`crates/fleet-models/Cargo.toml`:
+`crates/models/Cargo.toml`:
 ```toml
 [package]
-name = "fleet-models"
+name = "velos-models"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -149,15 +149,15 @@ workspace = true
 [build-dependencies]
 ```
 
-`crates/fleet-models/src/lib.rs`:
+`crates/models/src/lib.rs`:
 ```rust
 // fluorite-generated wire types are added in Task 2.
 ```
 
-`crates/fleet-store/Cargo.toml`:
+`crates/store/Cargo.toml`:
 ```toml
 [package]
-name = "fleet-store"
+name = "velos-store"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -168,15 +168,15 @@ workspace = true
 [dependencies]
 ```
 
-`crates/fleet-store/src/lib.rs`:
+`crates/store/src/lib.rs`:
 ```rust
 // Store trait and SQLite implementation are added in Tasks 3-4.
 ```
 
-`crates/fleet-apiserver/Cargo.toml`:
+`crates/apiserver/Cargo.toml`:
 ```toml
 [package]
-name = "fleet-apiserver"
+name = "velos-apiserver"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -187,7 +187,7 @@ workspace = true
 [dependencies]
 ```
 
-`crates/fleet-apiserver/src/lib.rs`:
+`crates/apiserver/src/lib.rs`:
 ```rust
 // HTTP surface is added in Tasks 5-7.
 ```
@@ -204,31 +204,31 @@ Expected: `fmt --check` passes, `clippy` passes with no warnings, `cargo test` r
 
 ```bash
 git add Cargo.toml Makefile rust-toolchain.toml .gitignore crates/
-git commit -m "scaffold: fleet workspace with shared lints and three crates"
+git commit -m "scaffold: velos workspace with shared lints and three crates"
 ```
 
 ---
 
-## Task 2: `fleet-models` — fluorite wire types + round-trip test
+## Task 2: `velos-models` — fluorite wire types + round-trip test
 
 **Files:**
-- Modify: `crates/fleet-models/Cargo.toml`
-- Create: `crates/fleet-models/build.rs`
-- Create: `crates/fleet-models/fluorite/fleet.fl`
-- Modify: `crates/fleet-models/src/lib.rs`
+- Modify: `crates/models/Cargo.toml`
+- Create: `crates/models/build.rs`
+- Create: `crates/models/fluorite/velos.fl`
+- Modify: `crates/models/src/lib.rs`
 
 **Interfaces:**
 - Consumes: nothing.
-- Produces: module `fleet_models::fleet` containing `ObjectMeta`, `Container`, `ContainerSpec`, `ContainerStatus`, `ContainerPhase`, `RestartPolicy`, `ResourceReqs`, `Worker`, `WorkerSpec`, `WorkerStatus`, `NodeResources`, `NodeCondition`, `NodeConditionType`, `Lease`, `LeaseSpec`. Each struct has a `::new(...)` constructor (positional, field order) from `derive_new`. Convenience constructors: `ObjectMeta::new_named(name) -> ObjectMeta`, `Container::pending(name, image) -> Container`.
+- Produces: module `velos_models::velos` containing `ObjectMeta`, `Container`, `ContainerSpec`, `ContainerStatus`, `ContainerPhase`, `RestartPolicy`, `ResourceReqs`, `Worker`, `WorkerSpec`, `WorkerStatus`, `NodeResources`, `NodeCondition`, `NodeConditionType`, `Lease`, `LeaseSpec`. Each struct has a `::new(...)` constructor (positional, field order) from `derive_new`. Convenience constructors: `ObjectMeta::new_named(name) -> ObjectMeta`, `Container::pending(name, image) -> Container`.
 
 - [ ] **Step 1: Write the failing test**
 
-Append to `crates/fleet-models/src/lib.rs`:
+Append to `crates/models/src/lib.rs`:
 ```rust
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
-    use super::fleet::*;
+    use super::velos::*;
 
     #[test]
     fn container_round_trips_in_camel_case() {
@@ -248,15 +248,15 @@ mod tests {
 
 - [ ] **Step 2: Run the test to verify it fails**
 
-Run: `cargo test -p fleet-models`
-Expected: FAIL — compile error, `fleet` module and `Container` do not exist yet.
+Run: `cargo test -p velos-models`
+Expected: FAIL — compile error, `velos` module and `Container` do not exist yet.
 
 - [ ] **Step 3: Add dependencies, build script, schema, and includes**
 
-`crates/fleet-models/Cargo.toml`:
+`crates/models/Cargo.toml`:
 ```toml
 [package]
-name = "fleet-models"
+name = "velos-models"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -276,7 +276,7 @@ fluorite_codegen = "0.6.1"
 anyhow = "1.0"
 ```
 
-`crates/fleet-models/build.rs`:
+`crates/models/build.rs`:
 ```rust
 use fluorite_codegen::code_gen::rust::RustOptions;
 
@@ -289,9 +289,9 @@ fn main() -> anyhow::Result<()> {
 }
 ```
 
-`crates/fleet-models/fluorite/fleet.fl` (note: `.fl` fields are snake_case; JSON becomes camelCase):
+`crates/models/fluorite/velos.fl` (note: `.fl` fields are snake_case; JSON becomes camelCase):
 ```rust
-package fleet;
+package velos;
 
 struct ObjectMeta {
     name: String,
@@ -396,12 +396,12 @@ struct Lease {
 }
 ```
 
-Replace `crates/fleet-models/src/lib.rs` (keep the test module from Step 1 at the end):
+Replace `crates/models/src/lib.rs` (keep the test module from Step 1 at the end):
 ```rust
-//! Fleet wire types, generated from `fluorite/fleet.fl`.
+//! Velos wire types, generated from `fluorite/velos.fl`.
 
-pub mod fleet {
-    include!(concat!(env!("OUT_DIR"), "/fleet/mod.rs"));
+pub mod velos {
+    include!(concat!(env!("OUT_DIR"), "/velos/mod.rs"));
 }
 
 use std::collections::HashMap;
@@ -409,7 +409,7 @@ use std::collections::HashMap;
 use chrono::Utc;
 use uuid::Uuid;
 
-use fleet::{
+use velos::{
     Container, ContainerPhase, ContainerSpec, ContainerStatus, ObjectMeta, ResourceReqs,
     RestartPolicy,
 };
@@ -451,7 +451,7 @@ impl Container {
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
-    use super::fleet::*;
+    use super::velos::*;
 
     #[test]
     fn container_round_trips_in_camel_case() {
@@ -470,23 +470,23 @@ mod tests {
 
 - [ ] **Step 4: Run the test to verify it passes**
 
-Run: `cargo test -p fleet-models`
+Run: `cargo test -p velos-models`
 Expected: PASS — `container_round_trips_in_camel_case` ok. If fluorite emits an unexpected constructor arity, adjust the `::new(...)` argument lists to match the generated field order (the order is exactly the `.fl` field order).
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/fleet-models/
+git add crates/models/
 git commit -m "feat(models): fluorite wire types for Container/Worker/Lease with round-trip test"
 ```
 
 ---
 
-## Task 3: `fleet-store` — Store trait, types, and `SqliteStore` create/get
+## Task 3: `velos-store` — Store trait, types, and `SqliteStore` create/get
 
 **Files:**
-- Modify: `crates/fleet-store/Cargo.toml`
-- Modify: `crates/fleet-store/src/lib.rs`
+- Modify: `crates/store/Cargo.toml`
+- Modify: `crates/store/src/lib.rs`
 
 **Interfaces:**
 - Consumes: nothing (storage type is hand-written, not fluorite).
@@ -501,7 +501,7 @@ This task implements everything except `list`/`delete` behavior, which Task 4 te
 
 - [ ] **Step 1: Write the failing test**
 
-Append to `crates/fleet-store/src/lib.rs`:
+Append to `crates/store/src/lib.rs`:
 ```rust
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
@@ -558,15 +558,15 @@ mod tests {
 
 - [ ] **Step 2: Run the test to verify it fails**
 
-Run: `cargo test -p fleet-store`
+Run: `cargo test -p velos-store`
 Expected: FAIL — compile error, `SqliteStore`/`StoredObject` not defined.
 
 - [ ] **Step 3: Add dependencies and implement the store**
 
-`crates/fleet-store/Cargo.toml`:
+`crates/store/Cargo.toml`:
 ```toml
 [package]
-name = "fleet-store"
+name = "velos-store"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -581,9 +581,9 @@ thiserror = "1.0"
 uuid = { version = "1", features = ["v4"] }
 ```
 
-Replace `crates/fleet-store/src/lib.rs` (keep the Step 1 test module at the end):
+Replace `crates/store/src/lib.rs` (keep the Step 1 test module at the end):
 ```rust
-//! Generic, schema-agnostic persistence for Fleet objects.
+//! Generic, schema-agnostic persistence for Velos objects.
 //!
 //! Objects are stored as opaque JSON documents plus index columns
 //! (`name`, `uid`, `resource_version`, `node_name`, `labels`). The store knows
@@ -852,22 +852,22 @@ mod tests {
 
 - [ ] **Step 4: Run the test to verify it passes**
 
-Run: `cargo test -p fleet-store`
+Run: `cargo test -p velos-store`
 Expected: PASS — 3 tests ok.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/fleet-store/
+git add crates/store/
 git commit -m "feat(store): Store trait + SqliteStore with monotonic resourceVersion, put/get"
 ```
 
 ---
 
-## Task 4: `fleet-store` — `list` selectors and `delete`
+## Task 4: `velos-store` — `list` selectors and `delete`
 
 **Files:**
-- Modify: `crates/fleet-store/src/lib.rs` (add tests only; `list`/`delete` were implemented in Task 3)
+- Modify: `crates/store/src/lib.rs` (add tests only; `list`/`delete` were implemented in Task 3)
 
 **Interfaces:**
 - Consumes: `Store`, `SqliteStore`, `Selector`, `StoredObject` from Task 3.
@@ -875,7 +875,7 @@ git commit -m "feat(store): Store trait + SqliteStore with monotonic resourceVer
 
 - [ ] **Step 1: Write the failing test**
 
-Add these tests inside the existing `#[cfg(test)] mod tests` block in `crates/fleet-store/src/lib.rs`:
+Add these tests inside the existing `#[cfg(test)] mod tests` block in `crates/store/src/lib.rs`:
 ```rust
     fn obj_with(kind: &str, name: &str, node: Option<&str>, labels: &[(&str, &str)]) -> StoredObject {
         StoredObject {
@@ -939,7 +939,7 @@ Add these tests inside the existing `#[cfg(test)] mod tests` block in `crates/fl
 
 - [ ] **Step 2: Run the test to verify it fails (or passes if implementation is complete)**
 
-Run: `cargo test -p fleet-store`
+Run: `cargo test -p velos-store`
 Expected: PASS — `list`/`delete` were already implemented in Task 3, so the new tests should pass immediately. If any fail, fix the `list`/`delete` implementation (not the tests) until green. (TDD note: these tests pin behavior that Task 3's implementation must satisfy; treat a failure as a Task 3 bug.)
 
 - [ ] **Step 3: (No new implementation expected)**
@@ -948,27 +948,27 @@ If green, skip. If red, correct `list`/`delete` in `impl Store for SqliteStore`.
 
 - [ ] **Step 4: Run the full crate test suite**
 
-Run: `cargo test -p fleet-store`
+Run: `cargo test -p velos-store`
 Expected: PASS — 7 tests ok.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/fleet-store/
+git add crates/store/
 git commit -m "test(store): cover list selectors (kind/label/nodeName) and delete"
 ```
 
 ---
 
-## Task 5: `fleet-apiserver` — create + get handlers and router
+## Task 5: `velos-apiserver` — create + get handlers and router
 
 **Files:**
-- Modify: `crates/fleet-apiserver/Cargo.toml`
-- Modify: `crates/fleet-apiserver/src/lib.rs`
-- Create: `crates/fleet-apiserver/src/main.rs`
+- Modify: `crates/apiserver/Cargo.toml`
+- Modify: `crates/apiserver/src/lib.rs`
+- Create: `crates/apiserver/src/main.rs`
 
 **Interfaces:**
-- Consumes: `fleet_store::{Store, SqliteStore, StoredObject, Selector, StoreError}`.
+- Consumes: `velos_store::{Store, SqliteStore, StoredObject, Selector, StoreError}`.
 - Produces:
   - `pub fn app(store: std::sync::Arc<dyn Store>) -> axum::Router`
   - `pub enum ApiError` implementing `IntoResponse`
@@ -977,7 +977,7 @@ git commit -m "test(store): cover list selectors (kind/label/nodeName) and delet
 
 - [ ] **Step 1: Write the failing test**
 
-Append to `crates/fleet-apiserver/src/lib.rs`:
+Append to `crates/apiserver/src/lib.rs`:
 ```rust
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
@@ -989,7 +989,7 @@ mod tests {
     use tower::ServiceExt;
 
     fn test_app() -> axum::Router {
-        let store = Arc::new(fleet_store::SqliteStore::in_memory().unwrap());
+        let store = Arc::new(velos_store::SqliteStore::in_memory().unwrap());
         app(store)
     }
 
@@ -1076,15 +1076,15 @@ mod tests {
 
 - [ ] **Step 2: Run the test to verify it fails**
 
-Run: `cargo test -p fleet-apiserver`
+Run: `cargo test -p velos-apiserver`
 Expected: FAIL — compile error, `app`/`ApiError` not defined.
 
 - [ ] **Step 3: Add dependencies and implement create/get + router**
 
-`crates/fleet-apiserver/Cargo.toml`:
+`crates/apiserver/Cargo.toml`:
 ```toml
 [package]
-name = "fleet-apiserver"
+name = "velos-apiserver"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -1093,15 +1093,15 @@ license.workspace = true
 workspace = true
 
 [lib]
-name = "fleet_apiserver"
+name = "velos_apiserver"
 path = "src/lib.rs"
 
 [[bin]]
-name = "fleet-apiserver"
+name = "velos-apiserver"
 path = "src/main.rs"
 
 [dependencies]
-fleet-store = { path = "../fleet-store" }
+velos-store = { path = "../store" }
 axum = "0.7"
 tokio = { version = "1", features = ["full"] }
 serde_json = "1.0"
@@ -1116,13 +1116,13 @@ tracing-subscriber = "0.3"
 tower = { version = "0.5", features = ["util"] }
 ```
 
-Replace `crates/fleet-apiserver/src/lib.rs` (keep the Step 1 test module at the end):
+Replace `crates/apiserver/src/lib.rs` (keep the Step 1 test module at the end):
 ```rust
-//! Fleet API server: a Kubernetes-shaped REST surface over `fleet_store`.
+//! Velos API server: a Kubernetes-shaped REST surface over `velos_store`.
 //!
 //! Objects are handled as opaque JSON; only the indexed envelope fields
 //! (`metadata.name`, `metadata.labels`, `spec.nodeName`) are interpreted.
-//! Typed admission against `fleet-models` is a later phase.
+//! Typed admission against `velos-models` is a later phase.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -1135,7 +1135,7 @@ use axum::{Json, Router};
 use serde_json::Value;
 use uuid::Uuid;
 
-use fleet_store::{Selector, Store, StoredObject};
+use velos_store::{Selector, Store, StoredObject};
 
 #[derive(Clone)]
 struct AppState {
@@ -1159,8 +1159,8 @@ impl IntoResponse for ApiError {
     }
 }
 
-impl From<fleet_store::StoreError> for ApiError {
-    fn from(e: fleet_store::StoreError) -> Self {
+impl From<velos_store::StoreError> for ApiError {
+    fn from(e: velos_store::StoreError) -> Self {
         ApiError::Internal(e.to_string())
     }
 }
@@ -1292,22 +1292,22 @@ mod tests {
 }
 ```
 
-Create `crates/fleet-apiserver/src/main.rs`:
+Create `crates/apiserver/src/main.rs`:
 ```rust
 use std::sync::Arc;
 
-use fleet_store::SqliteStore;
+use velos_store::SqliteStore;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
 
-    let store = Arc::new(SqliteStore::open("fleet.db")?);
-    let app = fleet_apiserver::app(store);
+    let store = Arc::new(SqliteStore::open("velos.db")?);
+    let app = velos_apiserver::app(store);
 
     let addr = "127.0.0.1:8080";
     let listener = tokio::net::TcpListener::bind(addr).await?;
-    tracing::info!("fleet-apiserver listening on {addr}");
+    tracing::info!("velos-apiserver listening on {addr}");
     axum::serve(listener, app).await?;
     Ok(())
 }
@@ -1317,22 +1317,22 @@ Make sure the test module from Step 1 replaces the placeholder `mod tests` block
 
 - [ ] **Step 4: Run the test to verify it passes**
 
-Run: `cargo test -p fleet-apiserver`
+Run: `cargo test -p velos-apiserver`
 Expected: PASS — 3 tests ok.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/fleet-apiserver/
+git add crates/apiserver/
 git commit -m "feat(apiserver): create + get handlers, router, binary entrypoint"
 ```
 
 ---
 
-## Task 6: `fleet-apiserver` — list collection with selectors
+## Task 6: `velos-apiserver` — list collection with selectors
 
 **Files:**
-- Modify: `crates/fleet-apiserver/src/lib.rs`
+- Modify: `crates/apiserver/src/lib.rs`
 
 **Interfaces:**
 - Consumes: `parse_selector`, `kind_for`, `AppState` from Task 5.
@@ -1340,7 +1340,7 @@ git commit -m "feat(apiserver): create + get handlers, router, binary entrypoint
 
 - [ ] **Step 1: Write the failing test**
 
-Add to the `#[cfg(test)] mod tests` block in `crates/fleet-apiserver/src/lib.rs`:
+Add to the `#[cfg(test)] mod tests` block in `crates/apiserver/src/lib.rs`:
 ```rust
     async fn post(app: &axum::Router, plural: &str, body: serde_json::Value) {
         let resp = app
@@ -1398,12 +1398,12 @@ Add to the `#[cfg(test)] mod tests` block in `crates/fleet-apiserver/src/lib.rs`
 
 - [ ] **Step 2: Run the test to verify it fails**
 
-Run: `cargo test -p fleet-apiserver list_returns_items_and_honors_selectors`
+Run: `cargo test -p velos-apiserver list_returns_items_and_honors_selectors`
 Expected: FAIL — `GET /api/v1/:plural` (collection) is not routed yet (returns 405/404).
 
 - [ ] **Step 3: Implement the list handler and route it**
 
-Add the handler to `crates/fleet-apiserver/src/lib.rs`:
+Add the handler to `crates/apiserver/src/lib.rs`:
 ```rust
 async fn list(
     State(state): State<AppState>,
@@ -1431,22 +1431,22 @@ pub fn app(store: Arc<dyn Store>) -> Router {
 
 - [ ] **Step 4: Run the test to verify it passes**
 
-Run: `cargo test -p fleet-apiserver`
+Run: `cargo test -p velos-apiserver`
 Expected: PASS — all apiserver tests ok.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/fleet-apiserver/
+git add crates/apiserver/
 git commit -m "feat(apiserver): list collection with label/field selectors"
 ```
 
 ---
 
-## Task 7: `fleet-apiserver` — replace, status subresource, delete
+## Task 7: `velos-apiserver` — replace, status subresource, delete
 
 **Files:**
-- Modify: `crates/fleet-apiserver/src/lib.rs`
+- Modify: `crates/apiserver/src/lib.rs`
 
 **Interfaces:**
 - Consumes: handlers/state/helpers from Tasks 5-6.
@@ -1511,12 +1511,12 @@ Add to the `#[cfg(test)] mod tests` block:
 
 - [ ] **Step 2: Run the test to verify it fails**
 
-Run: `cargo test -p fleet-apiserver replace_status_and_delete_lifecycle`
+Run: `cargo test -p velos-apiserver replace_status_and_delete_lifecycle`
 Expected: FAIL — PUT/DELETE routes not present.
 
 - [ ] **Step 3: Implement replace, status, delete and route them**
 
-Add handlers to `crates/fleet-apiserver/src/lib.rs`:
+Add handlers to `crates/apiserver/src/lib.rs`:
 ```rust
 async fn replace(
     State(state): State<AppState>,
@@ -1626,7 +1626,7 @@ Run: `make check`
 Expected: fmt clean, clippy clean (`-D warnings`), all tests pass.
 
 ```bash
-git add crates/fleet-apiserver/
+git add crates/apiserver/
 git commit -m "feat(apiserver): replace, status subresource, and delete"
 ```
 
@@ -1634,18 +1634,18 @@ git commit -m "feat(apiserver): replace, status subresource, and delete"
 
 ## Phase 1 Self-Review
 
-**Spec coverage (against `docs/superpowers/specs/2026-06-27-fleet-design.md`):**
+**Spec coverage (against `docs/superpowers/specs/2026-06-27-velos-design.md`):**
 - Single-node control plane + embedded SQLite → Tasks 3-5 (`SqliteStore`, `app`, `main`). ✓
 - fluorite wire types, camelCase, schemars-free for now → Task 2. ✓ (schemars/OpenAPI deferred to a later phase — noted below.)
 - Opaque-document + index-column store (protocol ≠ storage) → Task 3 `StoredObject`. ✓
 - REST CRUD + status subresource + label/field selectors → Tasks 5-7. ✓
 - Watch endpoint, scheduler/controllers, leases → **Phase 2** (out of scope here). ✓ deferred intentionally.
-- `fleetlet` + `ContainerRuntime` → **Phase 3**. Auth/registration → **Phase 4**. `fleetctl` → **Phase 5**. ✓ deferred.
+- `veloslet` + `ContainerRuntime` → **Phase 3**. Auth/registration → **Phase 4**. `velosctl` → **Phase 5**. ✓ deferred.
 
 **Intentional deferrals (carried to later phases, not gaps):**
 - `schemars::JsonSchema` derive + `GET /openapi.json` — deferred to keep Phase 1's dependency surface minimal; add the derive via `RustOptions::with_additional_derives` and the `schemars` features for `chrono`/`uuid` when building the OpenAPI endpoint.
 - Optimistic concurrency (`resourceVersion` precondition → 409) — Phase 1 is last-write-wins; add `expected_version` to `Store::put` in Phase 2 alongside watch.
-- Typed admission (deserialize into `fleet-models` types and validate) — Phase 1 stores opaque JSON; wire `fleet-models` into admission in a later phase.
+- Typed admission (deserialize into `velos-models` types and validate) — Phase 1 stores opaque JSON; wire `velos-models` into admission in a later phase.
 
 **Placeholder scan:** none — every step contains complete, runnable code and exact commands.
 

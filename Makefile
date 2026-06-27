@@ -18,4 +18,4 @@ check:
 	cargo test --workspace
 
 run:
-	cargo run -p fleet-apiserver
+	cargo run -p velos-apiserver

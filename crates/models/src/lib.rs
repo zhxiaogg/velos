@@ -1,12 +1,12 @@
-//! Fleet wire types, generated from `fluorite/fleet.fl`.
+//! Velos wire types, generated from `fluorite/velos.fl`.
 
 // fluorite emits `derive_new::new` constructors that take one argument per
 // field; for wide envelope structs (e.g. ObjectMeta) this trips
 // `clippy::too_many_arguments`. The generated constructors are intentional, so
 // the lint is allowed for the generated module only.
 #[allow(clippy::too_many_arguments)]
-pub mod fleet {
-    include!(concat!(env!("OUT_DIR"), "/fleet/mod.rs"));
+pub mod velos {
+    include!(concat!(env!("OUT_DIR"), "/velos/mod.rs"));
 }
 
 use std::collections::HashMap;
@@ -14,7 +14,7 @@ use std::collections::HashMap;
 use chrono::Utc;
 use uuid::Uuid;
 
-use fleet::{
+use velos::{
     Container, ContainerPhase, ContainerSpec, ContainerStatus, ObjectMeta, ResourceReqs,
     RestartPolicy,
 };
@@ -56,7 +56,7 @@ impl Container {
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
-    use super::fleet::*;
+    use super::velos::*;
 
     #[test]
     fn container_round_trips_in_camel_case() {

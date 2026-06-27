@@ -1,4 +1,4 @@
-//! Generic, schema-agnostic persistence for Fleet objects.
+//! Generic, schema-agnostic persistence for Velos objects.
 //!
 //! Objects are stored as opaque JSON documents plus index columns
 //! (`name`, `uid`, `resource_version`, `node_name`, `labels`). The store knows

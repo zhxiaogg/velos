@@ -1,5 +1,5 @@
 [package]
-name = "fleet-store"
+name = "velos-store"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

@@ -1,5 +1,5 @@
 [package]
-name = "fleet-apiserver"
+name = "velos-apiserver"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -8,15 +8,15 @@ license.workspace = true
 workspace = true
 
 [lib]
-name = "fleet_apiserver"
+name = "velos_apiserver"
 path = "src/lib.rs"
 
 [[bin]]
-name = "fleet-apiserver"
+name = "velos-apiserver"
 path = "src/main.rs"
 
 [dependencies]
-fleet-store = { path = "../fleet-store" }
+velos-store = { path = "../store" }
 axum = "0.7"
 tokio = { version = "1", features = ["full"] }
 serde_json = "1.0"

@@ -1,12 +1,12 @@
-# Fleet — Design
+# Velos — Design
 
 **Date:** 2026-06-27
 **Status:** Approved design, pre-implementation
 
 ## Summary
 
-Fleet is a Kubernetes-style control plane that manages the lifecycle of **containers**
-on a fleet of registered remote **macOS workers**, exposed over a RESTful API. A
+Velos is a Kubernetes-style control plane that manages the lifecycle of **containers**
+on a pool of registered remote **macOS workers**, exposed over a RESTful API. A
 container is an OCI image run in its own lightweight VM via **Apple Containerization**
 (the open-source `container` tool); the worker daemon drives it by wrapping the
 `container` CLI.
@@ -21,7 +21,7 @@ detected and their work reconciled.
 
 | Topic | Decision |
 |---|---|
-| Use case | General-purpose VM fleet → generic, workload-agnostic lifecycle API |
+| Use case | General-purpose VM pool → generic, workload-agnostic lifecycle API |
 | VM backend | Apple Containerization (`container` CLI), wrapped by the Rust worker daemon |
 | Workload unit | A **Container** (OCI image + run spec), each backed by a micro-VM (the Pod analog) |
 | Control plane | Single-node process, embedded **SQLite** datastore |
@@ -36,16 +36,16 @@ Design principles (semantic types, illegal-states-unrepresentable, deep modules,
 compile-time enforcement, pure core / impure edge, fail closed, protocol ≠ storage)
 are adopted from `zhxiaogg/hackamore` and persisted in this repo's `CLAUDE.md`.
 
-Naming: the system is **Fleet**; the control plane is **`fleet-apiserver`** plus
-in-process controllers; the worker daemon is **`fleetlet`** (the kubelet analog); the
-CLI is **`fleetctl`**.
+Naming: the system is **Velos**; the control plane is **`velos-apiserver`** plus
+in-process controllers; the worker daemon is **`veloslet`** (the kubelet analog); the
+CLI is **`velosctl`**.
 
 ## Architecture
 
 ```
                           ┌──────────────────────────────────────────┐
    operator / CLI  ───────▶            CONTROL PLANE (single node)     │
-   (fleetctl)      REST   │                                            │
+   (velosctl)      REST   │                                            │
                           │  ┌─────────────┐   ┌──────────────────┐    │
                           │  │  apiserver  │◀──│ SQLite datastore │    │
                           │  │ (REST+watch)│   │ (objects + watch │    │
@@ -61,7 +61,7 @@ CLI is **`fleetctl`**.
                   ┌───────────────────────┼───────────────────────┐
           ┌───────▼────────┐      ┌───────▼────────┐      ┌───────▼────────┐
           │  WORKER (mac)  │      │  WORKER (mac)  │      │  WORKER (mac)  │
-          │   fleetlet     │      │   fleetlet     │      │   fleetlet     │
+          │   veloslet     │      │   veloslet     │      │   veloslet     │
           │  wraps `container` CLI (Apple Containerization) │                │
           │  ┌─────────┐ ┌─────────┐               │      │                │
           │  │microVM/ │ │microVM/ │   ...         │      │                │
@@ -72,7 +72,7 @@ CLI is **`fleetctl`**.
 
 ### Components
 
-**Control plane** (one Rust process, `fleet-apiserver`):
+**Control plane** (one Rust process, `velos-apiserver`):
 
 - **API server** — REST + a streaming `watch` endpoint; the only component that
   touches the datastore.
@@ -86,7 +86,7 @@ CLI is **`fleetctl`**.
   - **container-gc / reconciler** — cleans up terminated containers, enforces
     desired vs observed.
 
-**Worker** (Rust daemon, `fleetlet`, one per macOS host):
+**Worker** (Rust daemon, `veloslet`, one per macOS host):
 
 - Registers with a bootstrap token, receives a per-worker credential.
 - Opens an **outbound** watch for Containers assigned to it
@@ -95,15 +95,15 @@ CLI is **`fleetctl`**.
   (`run`/`stop`/`rm`/`ls`/`inspect`), maps results into `status`.
 - Renews a **Lease** (heartbeat) every ~10s; reports node capacity/health.
 
-**`fleetctl`** — thin Rust CLI over the REST API (the kubectl analog).
+**`velosctl`** — thin Rust CLI over the REST API (the kubectl analog).
 
 **Web UI** — *deferred*. A separate future design; it will consume the
-fluorite-generated TypeScript types from `fleet-models`.
+fluorite-generated TypeScript types from `velos-models`.
 
 ## Schema / codegen layer (fluorite)
 
-`fleet-models` compiles `fluorite/*.fl` schemas in `build.rs` with serde + schemars
-derives. `apiserver`, `fleetlet`, and `fleetctl` all depend on it — one source of
+`velos-models` compiles `fluorite/*.fl` schemas in `build.rs` with serde + schemars
+derives. `apiserver`, `veloslet`, and `velosctl` all depend on it — one source of
 truth for wire types. fluorite is a pure data-type IDL (no REST endpoint description),
 so resource *types* live in `.fl` and routing is hand-written.
 
@@ -111,7 +111,7 @@ Each resource is a full object composed of a shared `ObjectMeta` (fluorite has n
 generics on user-defined types, so there is no `Resource<Spec, Status>`):
 
 ```rust
-package fleet;                      // single namespace → names unique project-wide
+package velos;                      // single namespace → names unique project-wide
 
 struct ObjectMeta {
     name: String, uid: Uuid,
@@ -150,7 +150,7 @@ struct LeaseSpec { holderIdentity: String, renewTime: DateTimeUtc, leaseDuration
 union WatchEvent { Added(Any), Modified(Any), Deleted(Any) }
 ```
 
-Hand-written convenience constructors live in `fleet-models/src/lib.rs`, not in the
+Hand-written convenience constructors live in `models/src/lib.rs`, not in the
 schema.
 
 ## REST API surface
@@ -168,8 +168,8 @@ Hand-written axum routes over the fluorite types, k8s-shaped:
 | `GET /openapi.json` | served from schemars-generated schemas |
 
 The **status subresource** enforces the spec/status split: clients/scheduler write
-`spec`; only the owning `fleetlet` writes `status`. The **watch** endpoint is what
-`fleetlet` opens outbound.
+`spec`; only the owning `veloslet` writes `status`. The **watch** endpoint is what
+`veloslet` opens outbound.
 
 ## Reconciliation & lifecycle
 
@@ -185,43 +185,43 @@ Container happy path:
               schedule(container, workers) -> Some("node-7")
               PUT spec.nodeName=node-7   (spec write — scheduler owns assignment)
               phase=Scheduled
-3. DISPATCH   fleetlet on node-7 (watch fieldSelector=spec.nodeName=node-7)
+3. DISPATCH   veloslet on node-7 (watch fieldSelector=spec.nodeName=node-7)
               receives WatchEvent::Modified → sees the new assignment
-4. ACTUATE    fleetlet reconciles desired vs local reality:
+4. ACTUATE    veloslet reconciles desired vs local reality:
               `container run --detach <image> ...` tagged with the container uid
               PUT .../status {phase=Running, containerID, startedAt}
-5. OBSERVE    fleetlet polls `container ls/inspect`; on exit:
+5. OBSERVE    veloslet polls `container ls/inspect`; on exit:
               PUT .../status {phase=Succeeded|Failed, exitCode, finishedAt}
 6. DELETE     client DELETE → deletionTimestamp set, finalizer present
-              fleetlet `container stop/rm`, clears its finalizer
+              veloslet `container stop/rm`, clears its finalizer
               → apiserver hard-deletes the row
 ```
 
 Key properties:
 
-- **The worker is authoritative for `status`.** Only the owning `fleetlet` writes a
+- **The worker is authoritative for `status`.** Only the owning `veloslet` writes a
   Container's `status` (via the `/status` subresource). "Is it really running?" is
   answered solely by what the worker reported.
 - **Desired state is durable; reconciliation is continuous.** A crashed/reconnected
-  `fleetlet` re-lists assigned containers at its last `resourceVersion` and
+  `veloslet` re-lists assigned containers at its last `resourceVersion` and
   re-converges. A missed watch event is harmless — a periodic full LIST (~30–60s) is
   the safety net. Delivery is not a packet that can be lost.
-- **Pure core / impure edge.** `schedule(...)` and the fleetlet's
+- **Pure core / impure edge.** `schedule(...)` and the veloslet's
   `reconcile(desired, observed) -> Vec<Action>` are pure and unit-testable; only the
   actuators touch SQLite or the `container` CLI.
-- **`restartPolicy`** is enforced in the fleetlet's reconcile: `Always`/`OnFailure`
+- **`restartPolicy`** is enforced in the veloslet's reconcile: `Always`/`OnFailure`
   → re-run on exit and report new `status`; `Never` → terminal phase.
 - **Idempotency.** Every actuator action is keyed by container `uid`; reconcile after
   a crash checks `container ls` for an existing instance tagged with the uid before
   launching, so it never double-creates.
 
 Watch/resync mechanics: `watch?resourceVersion=N` replays the event log from version
-N then streams live frames; `fleetlet` keeps its last-seen version to resume cheaply;
+N then streams live frames; `veloslet` keeps its last-seen version to resume cheaply;
 a periodic full LIST guards against any gap.
 
 ## Failure handling, heartbeats & rescheduling
 
-Heartbeats: each `fleetlet` renews its `Lease` every ~10s. The node-lifecycle
+Heartbeats: each `veloslet` renews its `Lease` every ~10s. The node-lifecycle
 controller watches leases; if `now - renewTime > leaseDuration` (default 40s) it sets
 `Worker` condition `Ready=False` (`NotReady`). The lease is the single source of
 liveness.
@@ -229,12 +229,12 @@ liveness.
 | Failure | Detection | Response |
 |---|---|---|
 | Worker process dies / host offline | Lease expires (40s) | Worker → `NotReady`. After grace (`evictionTimeout`, default ~5m), its `Running` containers → `status.phase=Unknown`; reschedulable ones have `spec.nodeName` cleared for re-binding. |
-| Worker reconnects after blip | Lease renews | `NotReady`→`Ready`; fleetlet re-lists at last `resourceVersion` and reconciles. No reschedule if recovered before grace. |
-| `container` CLI failure (pull/OOM/runtime) | fleetlet observes non-zero/missing instance | fleetlet writes `status.phase=Failed` + `message`; restartPolicy decides retry. Fail closed: ambiguous → `Failed`. |
-| Container exits | fleetlet `inspect` | `Succeeded`/`Failed` + `exitCode`; restartPolicy applies. |
-| apiserver restart | — | State durable in SQLite incl. event log + last `resourceVersion`; controllers and fleetlets reconnect watches and resume. |
-| Split-brain (two fleetlets, same name) | Lease `holderIdentity` mismatch | Registration binds a worker name to one credential; a second holder is rejected. |
-| Orphaned micro-VM | fleetlet periodic sweep: `container ls` vs assigned set | fleetlet reaps any instance tagged with a uid it isn't assigned. |
+| Worker reconnects after blip | Lease renews | `NotReady`→`Ready`; veloslet re-lists at last `resourceVersion` and reconciles. No reschedule if recovered before grace. |
+| `container` CLI failure (pull/OOM/runtime) | veloslet observes non-zero/missing instance | veloslet writes `status.phase=Failed` + `message`; restartPolicy decides retry. Fail closed: ambiguous → `Failed`. |
+| Container exits | veloslet `inspect` | `Succeeded`/`Failed` + `exitCode`; restartPolicy applies. |
+| apiserver restart | — | State durable in SQLite incl. event log + last `resourceVersion`; controllers and veloslets reconnect watches and resume. |
+| Split-brain (two veloslets, same name) | Lease `holderIdentity` mismatch | Registration binds a worker name to one credential; a second holder is rejected. |
+| Orphaned micro-VM | veloslet periodic sweep: `container ls` vs assigned set | veloslet reaps any instance tagged with a uid it isn't assigned. |
 
 Rescheduling policy (v1): only containers explicitly marked reschedulable (or, later,
 owned by a higher-level controller) are re-bound on node loss. A bare one-off
@@ -250,15 +250,15 @@ Timeouts are control-plane config: `heartbeatInterval` (10s), `leaseDuration` (4
 Bootstrap-token join (the `kubeadm` pattern), fail-closed throughout:
 
 ```
-1. MINT     `fleetctl token create` → BootstrapToken {id, secret, ttl, allowedLabels?}
+1. MINT     `velosctl token create` → BootstrapToken {id, secret, ttl, allowedLabels?}
             Secret shown once; stored hashed.
-2. JOIN     fleetlet --server URL --token <id.secret>
+2. JOIN     veloslet --server URL --token <id.secret>
             POST /api/v1/workers:register  (Authorization: Bearer <id.secret>)
             body: proposed worker name + node info (arch, macosVersion, capacity)
 3. ISSUE    apiserver verifies token (hash match, unexpired, unrevoked) →
             creates Worker + issues a per-worker WorkerCredential (long-lived bearer,
             stored hashed). Returned ONCE.
-4. PERSIST  fleetlet writes credential to a local file (0600); uses it as Bearer on
+4. PERSIST  veloslet writes credential to a local file (0600); uses it as Bearer on
             all subsequent calls (watch, status, lease renew).
 5. AUTHZ    every request → authenticate + authorize: a worker may only read/write
             objects scoped to itself (its Worker, its Leases, Containers where
@@ -272,7 +272,7 @@ Bootstrap-token join (the `kubeadm` pattern), fail-closed throughout:
 - **Protocol ≠ storage:** the wire `WorkerCredential` (fluorite type) is distinct from
   the hashed credential record persisted in SQLite (hand-written). Only the hash is
   stored.
-- **Revocation:** `fleetctl worker delete <name>` tombstones the hashed credential;
+- **Revocation:** `velosctl worker delete <name>` tombstones the hashed credential;
   the worker's next call fails closed and it must re-join.
 
 Transport: TLS on the apiserver from day one (operator-supplied cert, or self-signed
@@ -285,7 +285,7 @@ path behind that seam (not built in v1).
 |---|---|
 | Async runtime | tokio |
 | HTTP server | axum (streaming watch bodies, tower middleware for auth) |
-| HTTP client (fleetlet) | reqwest |
+| HTTP client (veloslet) | reqwest |
 | Datastore | rusqlite (or `sqlx` sqlite) — opaque-document + index-column store |
 | Schema/codegen | fluorite (`fluorite_codegen` in build.rs) |
 | Serialization | serde + serde_json (NDJSON watch frames) |
@@ -298,22 +298,22 @@ path behind that seam (not built in v1).
 ## Crate layout
 
 ```
-fleet/                          # Rust crate workspace
+velos/                          # Rust crate workspace
 ├── Cargo.toml                  # workspace + clippy lints (deny unwrap/expect/panic/wildcard)
 ├── Makefile                    # make check = fmt + clippy -D warnings + test
 ├── CLAUDE.md                   # persisted design principles
 ├── crates/
-│   ├── fleet-models/           # fluorite .fl schemas + build.rs → wire types (shared)
+│   ├── models/           # fluorite .fl schemas + build.rs → wire types (shared)
 │   │   └── fluorite/*.fl
-│   ├── fleet-store/            # Store trait + SQLite impl (storage types, NOT fluorite); watch event log
-│   ├── fleet-scheduler/        # pure: schedule(unbound, workers) -> Option<WorkerName>
-│   ├── fleet-apiserver/        # axum REST + watch + admission + auth; hosts controllers
+│   ├── store/            # Store trait + SQLite impl (storage types, NOT fluorite); watch event log
+│   ├── scheduler/        # pure: schedule(unbound, workers) -> Option<WorkerName>
+│   ├── apiserver/        # axum REST + watch + admission + auth; hosts controllers
 │   │   └── controllers/        #   node-lifecycle, gc, reconcilers
-│   ├── fleet-auth/             # Authenticator trait, bootstrap tokens, credentials, Secret newtype
-│   ├── fleetlet/               # worker daemon: register, watch, reconcile, container-CLI actuator
+│   ├── auth/             # Authenticator trait, bootstrap tokens, credentials, Secret newtype
+│   ├── veloslet/               # worker daemon: register, watch, reconcile, container-CLI actuator
 │   │   └── runtime/            #   ContainerRuntime trait + AppleContainer impl (CLI wrapper)
-│   ├── fleetctl/               # CLI client over REST
-│   └── fleet-tests/            # full-stack e2e (apiserver + fake ContainerRuntime)
+│   ├── velosctl/               # CLI client over REST
+│   └── tests/            # full-stack e2e (apiserver + fake ContainerRuntime)
 └── docs/superpowers/specs/     # this design doc
 ```
 
@@ -322,7 +322,7 @@ today, Postgres later) and **`ContainerRuntime`** (Apple `container` today, Tart
 full VMs / Linux later). Both are deep modules.
 
 A **Web UI** (`web/`) is a planned future component, designed and implemented
-separately; it consumes the TypeScript types regenerated from `fleet-models`.
+separately; it consumes the TypeScript types regenerated from `velos-models`.
 
 ## Future extensibility (additive, no API breaks)
 

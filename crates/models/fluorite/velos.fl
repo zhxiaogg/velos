@@ -1,4 +1,4 @@
-package fleet;
+package velos;
 
 struct ObjectMeta {
     name: String,

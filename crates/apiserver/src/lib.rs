@@ -1,8 +1,8 @@
-//! Fleet API server: a Kubernetes-shaped REST surface over `fleet_store`.
+//! Velos API server: a Kubernetes-shaped REST surface over `velos_store`.
 //!
 //! Objects are handled as opaque JSON; only the indexed envelope fields
 //! (`metadata.name`, `metadata.labels`, `spec.nodeName`) are interpreted.
-//! Typed admission against `fleet-models` is a later phase.
+//! Typed admission against `velos-models` is a later phase.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -15,7 +15,7 @@ use axum::{Json, Router};
 use serde_json::Value;
 use uuid::Uuid;
 
-use fleet_store::{Selector, Store, StoredObject};
+use velos_store::{Selector, Store, StoredObject};
 
 #[derive(Clone)]
 struct AppState {
@@ -39,8 +39,8 @@ impl IntoResponse for ApiError {
     }
 }
 
-impl From<fleet_store::StoreError> for ApiError {
-    fn from(e: fleet_store::StoreError) -> Self {
+impl From<velos_store::StoreError> for ApiError {
+    fn from(e: velos_store::StoreError) -> Self {
         ApiError::Internal(e.to_string())
     }
 }
@@ -277,7 +277,7 @@ mod tests {
     use tower::ServiceExt;
 
     fn test_app() -> axum::Router {
-        let store = Arc::new(fleet_store::SqliteStore::in_memory().unwrap());
+        let store = Arc::new(velos_store::SqliteStore::in_memory().unwrap());
         app(store)
     }
 
