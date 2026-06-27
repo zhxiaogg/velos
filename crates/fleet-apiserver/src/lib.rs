@@ -10,7 +10,7 @@ use std::sync::Arc;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use axum::routing::{get, post};
+use axum::routing::{get, post, put};
 use axum::{Json, Router};
 use serde_json::Value;
 use uuid::Uuid;
@@ -56,7 +56,10 @@ fn kind_for(plural: &str) -> Option<&'static str> {
 }
 
 fn extract_name(doc: &Value) -> Option<String> {
-    doc.get("metadata")?.get("name")?.as_str().map(str::to_string)
+    doc.get("metadata")?
+        .get("name")?
+        .as_str()
+        .map(str::to_string)
 }
 
 fn extract_labels(doc: &Value) -> HashMap<String, String> {
@@ -76,7 +79,10 @@ fn extract_labels(doc: &Value) -> HashMap<String, String> {
 }
 
 fn extract_node_name(doc: &Value) -> Option<String> {
-    doc.get("spec")?.get("nodeName")?.as_str().map(str::to_string)
+    doc.get("spec")?
+        .get("nodeName")?
+        .as_str()
+        .map(str::to_string)
 }
 
 /// Stamps server-owned envelope fields into a (mutable) object document.
@@ -92,7 +98,8 @@ fn stamp_meta(doc: &mut Value, uid: &Uuid, rv: u64) {
         m.entry("labels").or_insert_with(|| serde_json::json!({}));
         m.entry("annotations")
             .or_insert_with(|| serde_json::json!({}));
-        m.entry("finalizers").or_insert_with(|| serde_json::json!([]));
+        m.entry("finalizers")
+            .or_insert_with(|| serde_json::json!([]));
     }
 }
 
@@ -172,11 +179,91 @@ async fn list(
     Ok(Json(serde_json::json!({ "items": items })))
 }
 
+async fn replace(
+    State(state): State<AppState>,
+    Path((plural, name)): Path<(String, String)>,
+    Json(mut body): Json<Value>,
+) -> Result<Json<Value>, ApiError> {
+    let kind = kind_for(&plural).ok_or(ApiError::NotFound)?;
+    if !body.is_object() {
+        return Err(ApiError::BadRequest("body must be a JSON object".into()));
+    }
+    let existing = state.store.get(kind, &name)?.ok_or(ApiError::NotFound)?;
+    let rv = state.store.next_resource_version()?;
+    stamp_meta(&mut body, &existing.uid, rv);
+
+    // Force name to match the path and preserve the original creationTimestamp.
+    if let Some(m) = body.get_mut("metadata").and_then(Value::as_object_mut) {
+        m.insert("name".to_string(), serde_json::json!(name));
+        if let Some(ct) = existing
+            .document
+            .get("metadata")
+            .and_then(|x| x.get("creationTimestamp"))
+        {
+            m.insert("creationTimestamp".to_string(), ct.clone());
+        }
+    }
+
+    let obj = StoredObject {
+        kind: kind.to_string(),
+        name: name.clone(),
+        uid: existing.uid,
+        resource_version: rv,
+        node_name: extract_node_name(&body),
+        labels: extract_labels(&body),
+        document: body.clone(),
+    };
+    state.store.put(&obj)?;
+    Ok(Json(body))
+}
+
+async fn replace_status(
+    State(state): State<AppState>,
+    Path((plural, name)): Path<(String, String)>,
+    Json(body): Json<Value>,
+) -> Result<Json<Value>, ApiError> {
+    let kind = kind_for(&plural).ok_or(ApiError::NotFound)?;
+    let mut existing = state.store.get(kind, &name)?.ok_or(ApiError::NotFound)?;
+    // Accept either `{ "status": {...} }` or a bare status object.
+    let new_status = body.get("status").cloned().unwrap_or(body);
+    let rv = state.store.next_resource_version()?;
+
+    if let Some(m) = existing.document.as_object_mut() {
+        m.insert("status".to_string(), new_status);
+    }
+    if let Some(m) = existing
+        .document
+        .get_mut("metadata")
+        .and_then(Value::as_object_mut)
+    {
+        m.insert("resourceVersion".to_string(), serde_json::json!(rv));
+    }
+    existing.resource_version = rv;
+    state.store.put(&existing)?;
+    Ok(Json(existing.document))
+}
+
+async fn delete(
+    State(state): State<AppState>,
+    Path((plural, name)): Path<(String, String)>,
+) -> Result<StatusCode, ApiError> {
+    let kind = kind_for(&plural).ok_or(ApiError::NotFound)?;
+    if state.store.delete(kind, &name)? {
+        Ok(StatusCode::NO_CONTENT)
+    } else {
+        Err(ApiError::NotFound)
+    }
+}
+
 pub fn app(store: Arc<dyn Store>) -> Router {
     let state = AppState { store };
     Router::new()
         .route("/api/v1/:plural", post(create).get(list))
-        .route("/api/v1/:plural/:name", get(get_one))
+        .route(
+            "/api/v1/:plural/:name",
+            get(get_one).put(replace).delete(delete),
+        )
+        .route("/api/v1/:plural/:name/status", put(replace_status))
         .with_state(state)
 }
 
@@ -343,6 +430,92 @@ mod tests {
         let by_node = body_json(resp).await;
         assert_eq!(by_node["items"].as_array().unwrap().len(), 1);
         assert_eq!(by_node["items"][0]["metadata"]["name"], "c2");
+    }
+
+    #[tokio::test]
+    async fn replace_status_and_delete_lifecycle() {
+        let app = test_app();
+        post(
+            &app,
+            "containers",
+            serde_json::json!({
+                "metadata": { "name": "c1" },
+                "spec": { "image": "img" }
+            }),
+        )
+        .await;
+
+        // PUT status subresource
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("PUT")
+                    .uri("/api/v1/containers/c1/status")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::json!({ "status": { "phase": "Running" } }).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let after = body_json(resp).await;
+        assert_eq!(after["status"]["phase"], "Running");
+        assert_eq!(after["spec"]["image"], "img"); // spec preserved
+        assert_eq!(after["metadata"]["resourceVersion"], 2); // bumped
+
+        // PUT replace whole object
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("PUT")
+                    .uri("/api/v1/containers/c1")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "metadata": { "name": "c1" },
+                            "spec": { "image": "img2" }
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let replaced = body_json(resp).await;
+        assert_eq!(replaced["spec"]["image"], "img2");
+        assert_eq!(replaced["metadata"]["resourceVersion"], 3);
+
+        // DELETE
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("DELETE")
+                    .uri("/api/v1/containers/c1")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+
+        // DELETE again → 404
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("DELETE")
+                    .uri("/api/v1/containers/c1")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
     }
 
     #[tokio::test]

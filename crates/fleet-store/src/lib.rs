@@ -267,7 +267,12 @@ mod tests {
         assert_eq!(got.document["v"], 2);
     }
 
-    fn obj_with(kind: &str, name: &str, node: Option<&str>, labels: &[(&str, &str)]) -> StoredObject {
+    fn obj_with(
+        kind: &str,
+        name: &str,
+        node: Option<&str>,
+        labels: &[(&str, &str)],
+    ) -> StoredObject {
         StoredObject {
             kind: kind.to_string(),
             name: name.to_string(),
