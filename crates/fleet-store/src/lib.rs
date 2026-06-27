@@ -266,4 +266,76 @@ mod tests {
         assert_eq!(got.resource_version, 2);
         assert_eq!(got.document["v"], 2);
     }
+
+    fn obj_with(kind: &str, name: &str, node: Option<&str>, labels: &[(&str, &str)]) -> StoredObject {
+        StoredObject {
+            kind: kind.to_string(),
+            name: name.to_string(),
+            uid: Uuid::new_v4(),
+            resource_version: 1,
+            node_name: node.map(|s| s.to_string()),
+            labels: labels
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect(),
+            document: serde_json::json!({ "metadata": { "name": name } }),
+        }
+    }
+
+    #[test]
+    fn list_filters_by_kind() {
+        let s = SqliteStore::in_memory().unwrap();
+        s.put(&obj_with("Container", "c1", None, &[])).unwrap();
+        s.put(&obj_with("Container", "c2", None, &[])).unwrap();
+        s.put(&obj_with("Worker", "w1", None, &[])).unwrap();
+
+        let containers = s.list("Container", &Selector::default()).unwrap();
+        assert_eq!(containers.len(), 2);
+        let workers = s.list("Worker", &Selector::default()).unwrap();
+        assert_eq!(workers.len(), 1);
+    }
+
+    #[test]
+    fn list_filters_by_label_equality() {
+        let s = SqliteStore::in_memory().unwrap();
+        s.put(&obj_with("Container", "c1", None, &[("team", "a")]))
+            .unwrap();
+        s.put(&obj_with("Container", "c2", None, &[("team", "b")]))
+            .unwrap();
+
+        let sel = Selector {
+            labels: vec![("team".into(), "a".into())],
+            node_name: None,
+        };
+        let got = s.list("Container", &sel).unwrap();
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].name, "c1");
+    }
+
+    #[test]
+    fn list_filters_by_node_name() {
+        let s = SqliteStore::in_memory().unwrap();
+        s.put(&obj_with("Container", "c1", Some("node-7"), &[]))
+            .unwrap();
+        s.put(&obj_with("Container", "c2", Some("node-8"), &[]))
+            .unwrap();
+        s.put(&obj_with("Container", "c3", None, &[])).unwrap();
+
+        let sel = Selector {
+            labels: vec![],
+            node_name: Some("node-7".into()),
+        };
+        let got = s.list("Container", &sel).unwrap();
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].name, "c1");
+    }
+
+    #[test]
+    fn delete_removes_and_reports() {
+        let s = SqliteStore::in_memory().unwrap();
+        s.put(&obj_with("Container", "c1", None, &[])).unwrap();
+        assert!(s.delete("Container", "c1").unwrap());
+        assert!(!s.delete("Container", "c1").unwrap());
+        assert!(s.get("Container", "c1").unwrap().is_none());
+    }
 }
