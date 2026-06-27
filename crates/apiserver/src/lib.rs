@@ -11,14 +11,15 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use axum::body::Body;
-use axum::extract::{Path, Query, State};
-use axum::http::{StatusCode, header};
+use axum::extract::{Path, Query, Request, State};
+use axum::http::{HeaderMap, StatusCode, header};
+use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post, put};
 use axum::{Json, Router};
 use serde_json::Value;
 use uuid::Uuid;
-
+use velos_auth::{AuthService, Identity};
 use velos_store::{EventType, Selector, Store, StoreError, StoredEvent, StoredObject};
 
 /// Poll interval for the watch event log.
@@ -27,11 +28,14 @@ const WATCH_POLL: Duration = Duration::from_millis(100);
 #[derive(Clone)]
 pub struct AppState {
     store: Arc<dyn Store>,
+    auth: Option<Arc<dyn AuthService>>,
 }
 
 pub enum ApiError {
     NotFound,
     BadRequest(String),
+    Unauthorized,
+    Forbidden,
     Conflict(String),
     Internal(String),
 }
@@ -41,6 +45,8 @@ impl IntoResponse for ApiError {
         let (status, msg) = match self {
             ApiError::NotFound => (StatusCode::NOT_FOUND, "not found".to_string()),
             ApiError::BadRequest(m) => (StatusCode::BAD_REQUEST, m),
+            ApiError::Unauthorized => (StatusCode::UNAUTHORIZED, "unauthorized".to_string()),
+            ApiError::Forbidden => (StatusCode::FORBIDDEN, "forbidden".to_string()),
             ApiError::Conflict(m) => (StatusCode::CONFLICT, m),
             ApiError::Internal(m) => (StatusCode::INTERNAL_SERVER_ERROR, m),
         };
@@ -406,8 +412,135 @@ async fn delete(
     }
 }
 
-pub fn app(store: Arc<dyn Store>) -> Router {
-    let state = AppState { store };
+// ---------------------------------------------------------------------------
+// Auth: bootstrap-token mint + worker registration + request authentication.
+// ---------------------------------------------------------------------------
+
+fn bearer(headers: &HeaderMap) -> Option<String> {
+    headers
+        .get(header::AUTHORIZATION)?
+        .to_str()
+        .ok()?
+        .strip_prefix("Bearer ")
+        .map(str::to_string)
+}
+
+/// `POST /auth/v1/tokens` — mint a bootstrap token. Body: `{ "ttlSeconds": N }`.
+async fn mint_token(
+    State(state): State<AppState>,
+    body: Option<Json<Value>>,
+) -> Result<Json<Value>, ApiError> {
+    let auth = state.auth.as_ref().ok_or(ApiError::NotFound)?;
+    let ttl = body
+        .and_then(|Json(b)| b.get("ttlSeconds").and_then(Value::as_i64))
+        .unwrap_or(24 * 3600);
+    let tok = auth
+        .mint_bootstrap_token(ttl)
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    Ok(Json(serde_json::json!({
+        "tokenId": tok.token_id,
+        "secret": tok.secret.expose(),
+        "expiresAt": tok.expires_at.to_rfc3339(),
+    })))
+}
+
+/// `POST /auth/v1/register` — join with a bootstrap token, get a credential.
+async fn register(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(req): Json<Value>,
+) -> Result<Json<Value>, ApiError> {
+    let auth = state.auth.as_ref().ok_or(ApiError::NotFound)?;
+    let token = bearer(&headers).ok_or(ApiError::Unauthorized)?;
+    auth.verify_bootstrap(&token)
+        .map_err(|_| ApiError::Unauthorized)?;
+
+    let name = req
+        .get("name")
+        .and_then(Value::as_str)
+        .ok_or_else(|| ApiError::BadRequest("name required".into()))?
+        .to_string();
+    let capacity = req
+        .get("capacity")
+        .cloned()
+        .unwrap_or_else(|| serde_json::json!({}));
+    let addresses = req
+        .get("addresses")
+        .cloned()
+        .unwrap_or_else(|| serde_json::json!([]));
+    let runtime_version = req
+        .get("containerRuntimeVersion")
+        .cloned()
+        .unwrap_or_else(|| serde_json::json!("unknown"));
+
+    let uid = Uuid::new_v4();
+    let rv = state.store.next_resource_version()?;
+    let mut doc = serde_json::json!({
+        "metadata": { "name": name },
+        "spec": { "unschedulable": false },
+        "status": {
+            "capacity": capacity,
+            "allocatable": capacity,
+            "conditions": [],
+            "addresses": addresses,
+            "containerRuntimeVersion": runtime_version,
+        }
+    });
+    stamp_meta(&mut doc, &uid, rv);
+    state.store.put(&StoredObject {
+        kind: "Worker".to_string(),
+        name: name.clone(),
+        uid,
+        resource_version: rv,
+        node_name: None,
+        labels: HashMap::new(),
+        document: doc,
+    })?;
+
+    let credential = auth
+        .issue_credential(&name)
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    Ok(Json(serde_json::json!({
+        "workerName": name,
+        "token": credential,
+    })))
+}
+
+/// Authenticate every `/api/v1` request and enforce worker-scoped access.
+async fn require_auth(
+    State(auth): State<Arc<dyn AuthService>>,
+    request: Request,
+    next: Next,
+) -> Result<Response, ApiError> {
+    let token = bearer(request.headers()).ok_or(ApiError::Unauthorized)?;
+    let Identity::Worker(who) = auth.authenticate(&token).ok_or(ApiError::Unauthorized)?;
+
+    // A worker may only address its own Worker and Lease objects by name.
+    // Container access is allowed for any authenticated worker (nodeName-scoped
+    // enforcement is a documented refinement).
+    let path = request.uri().path();
+    if let Some((plural, name)) = named_path(path)
+        && matches!(plural, "workers" | "leases")
+        && name != who
+    {
+        return Err(ApiError::Forbidden);
+    }
+    Ok(next.run(request).await)
+}
+
+/// Extract `(plural, name)` from `/api/v1/{plural}/{name}[/...]`, if present.
+fn named_path(path: &str) -> Option<(&str, &str)> {
+    let rest = path.strip_prefix("/api/v1/")?;
+    let mut parts = rest.split('/');
+    let plural = parts.next()?;
+    let name = parts.next()?;
+    if name.is_empty() {
+        return None;
+    }
+    Some((plural, name))
+}
+
+fn api_routes() -> Router<AppState> {
     Router::new()
         .route("/api/v1/:plural", post(create).get(list_or_watch))
         .route(
@@ -415,6 +548,30 @@ pub fn app(store: Arc<dyn Store>) -> Router {
             get(get_one).put(replace).delete(delete),
         )
         .route("/api/v1/:plural/:name/status", put(replace_status))
+}
+
+/// Build the apiserver with no authentication (dev / tests / e2e).
+pub fn app(store: Arc<dyn Store>) -> Router {
+    let state = AppState { store, auth: None };
+    api_routes().with_state(state)
+}
+
+/// Build the apiserver with bootstrap-token auth: `/auth/v1` endpoints are open
+/// (they self-verify), while every `/api/v1` request must present a valid worker
+/// credential and may only touch its own Worker/Lease objects.
+pub fn app_with_auth(store: Arc<dyn Store>, auth: Arc<dyn AuthService>) -> Router {
+    let state = AppState {
+        store,
+        auth: Some(Arc::clone(&auth)),
+    };
+    let protected = api_routes().layer(middleware::from_fn_with_state(
+        Arc::clone(&auth),
+        require_auth,
+    ));
+    Router::new()
+        .route("/auth/v1/tokens", post(mint_token))
+        .route("/auth/v1/register", post(register))
+        .merge(protected)
         .with_state(state)
 }
 
@@ -848,6 +1005,100 @@ mod tests {
         assert_eq!(frames[0]["type"], "Added");
         assert_eq!(frames[1]["type"], "Modified");
         assert_eq!(frames[1]["object"]["status"]["phase"], "Running");
+    }
+
+    async fn send(app: &axum::Router, req: Request<Body>) -> axum::response::Response {
+        app.clone().oneshot(req).await.unwrap()
+    }
+
+    #[tokio::test]
+    async fn auth_flow_mint_register_then_scoped_access() {
+        let store: Arc<dyn velos_store::Store> =
+            Arc::new(velos_store::SqliteStore::in_memory().unwrap());
+        let auth = Arc::new(velos_auth::StoreAuthenticator::new(Arc::clone(&store)));
+        let app = app_with_auth(store, auth);
+
+        // Mint a bootstrap token.
+        let resp = send(
+            &app,
+            Request::builder()
+                .method("POST")
+                .uri("/auth/v1/tokens")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({ "ttlSeconds": 60 }).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let tok = body_json(resp).await;
+        let boot = format!(
+            "{}.{}",
+            tok["tokenId"].as_str().unwrap(),
+            tok["secret"].as_str().unwrap()
+        );
+
+        // Register with the bootstrap token → receive a worker credential.
+        let resp = send(
+            &app,
+            Request::builder()
+                .method("POST")
+                .uri("/auth/v1/register")
+                .header("content-type", "application/json")
+                .header("authorization", format!("Bearer {boot}"))
+                .body(Body::from(
+                    serde_json::json!({
+                        "name": "w1",
+                        "capacity": { "cpu": 4, "memoryBytes": 8589934592u64, "maxContainers": 8 },
+                        "containerRuntimeVersion": "fake/1.0"
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let cred = body_json(resp).await;
+        let credential = cred["token"].as_str().unwrap().to_string();
+
+        // No credential → 401.
+        let resp = send(
+            &app,
+            Request::builder()
+                .method("GET")
+                .uri("/api/v1/workers/w1")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+
+        // Valid credential, own Worker → 200.
+        let resp = send(
+            &app,
+            Request::builder()
+                .method("GET")
+                .uri("/api/v1/workers/w1")
+                .header("authorization", format!("Bearer {credential}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        // Valid credential, another worker's Lease → 403.
+        let resp = send(
+            &app,
+            Request::builder()
+                .method("GET")
+                .uri("/api/v1/leases/other")
+                .header("authorization", format!("Bearer {credential}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
     }
 
     #[tokio::test]

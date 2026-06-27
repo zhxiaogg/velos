@@ -131,7 +131,7 @@ impl ApiClient {
 
     /// Join the cluster with a bootstrap token, receiving a worker credential.
     pub async fn register(&self, request: &Value) -> Result<Value, ClientError> {
-        let url = format!("{}/api/v1/workers:register", self.base);
+        let url = format!("{}/auth/v1/register", self.base);
         self.send(self.http.post(url).json(request)).await
     }
 }
