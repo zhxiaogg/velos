@@ -20,9 +20,9 @@ Data auto-refreshes every 2s.
 
 `npm run build` emits the bundle into `../crates/apiserver/ui`, which the
 **apiserver embeds and serves itself** (via `rust-embed`). In production there is
-no separate web process — `velos-apiserver` serves the dashboard same-origin
+no separate web process — `velos-server` serves the dashboard same-origin
 alongside the API, and unknown paths fall back to `index.html` for client-side
-routing. A `cargo install velos-apiserver` therefore ships a working UI.
+routing. A `cargo install velos-server` therefore ships a working UI.
 
 ## Auth (interim)
 
@@ -42,7 +42,7 @@ dev`.
 ## Develop
 
 The apiserver serves the built bundle, so for production you only need
-`make build` (or `make web`) and then run `velos-apiserver`. For a fast
+`make build` (or `make web`) and then run `velos-server`. For a fast
 edit/reload loop, run the Vite dev server, which proxies the API/auth paths to
 the apiserver (purely to avoid CORS):
 

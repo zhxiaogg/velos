@@ -1,5 +1,5 @@
 [package]
-name = "velos-apiserver"
+name = "velos-server"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -14,11 +14,11 @@ include = ["src/**/*", "ui/**/*"]
 workspace = true
 
 [lib]
-name = "velos_apiserver"
+name = "velos_server"
 path = "src/lib.rs"
 
 [[bin]]
-name = "velos-apiserver"
+name = "velos-server"
 path = "src/main.rs"
 
 [dependencies]
@@ -26,6 +26,7 @@ velos-store = { workspace = true }
 velos-scheduler = { workspace = true }
 velos-auth = { workspace = true }
 axum = "0.7"
+clap = { version = "4", features = ["derive", "env"] }
 tokio = { version = "1", features = ["full"] }
 futures = "0.3"
 async-stream = "0.3"
@@ -37,7 +38,7 @@ thiserror = "1.0"
 anyhow = "1.0"
 tracing = "0.1"
 tracing-subscriber = "0.3"
-# Embeds the built web UI (crates/apiserver/ui) into the binary so the apiserver
+# Embeds the built web UI (crates/server/ui) into the binary so the apiserver
 # can serve the dashboard with no separate process. Debug builds read from disk;
 # release builds embed at compile time.
 rust-embed = { version = "8", features = ["mime-guess"] }

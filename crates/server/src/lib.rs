@@ -19,7 +19,7 @@ use axum::routing::{get, post, put};
 use axum::{Json, Router};
 use serde_json::Value;
 use uuid::Uuid;
-use velos_auth::{AuthService, Identity};
+use velos_auth::{AuthError, AuthService, Identity, Secret};
 use velos_store::{EventType, Selector, Store, StoreError, StoredEvent, StoredObject};
 
 /// Poll interval for the watch event log.
@@ -425,12 +425,15 @@ fn bearer(headers: &HeaderMap) -> Option<String> {
         .map(str::to_string)
 }
 
-/// `POST /auth/v1/tokens` — mint a bootstrap token. Body: `{ "ttlSeconds": N }`.
+/// `POST /auth/v1/tokens` — mint a worker bootstrap token (admin-only).
+/// Body: `{ "ttlSeconds": N }`.
 async fn mint_token(
     State(state): State<AppState>,
+    headers: HeaderMap,
     body: Option<Json<Value>>,
 ) -> Result<Json<Value>, ApiError> {
     let auth = state.auth.as_ref().ok_or(ApiError::NotFound)?;
+    require_admin(auth, &headers)?;
     let ttl = body
         .and_then(|Json(b)| b.get("ttlSeconds").and_then(Value::as_i64))
         .unwrap_or(24 * 3600);
@@ -506,26 +509,53 @@ async fn register(
     })))
 }
 
-/// Authenticate every `/api/v1` request and enforce worker-scoped access.
+/// Authenticate every `/api/v1` request. Admins get full access; workers are
+/// scoped to their own objects. Fails closed while the server is uninitialized.
 async fn require_auth(
     State(auth): State<Arc<dyn AuthService>>,
     request: Request,
     next: Next,
 ) -> Result<Response, ApiError> {
-    let token = bearer(request.headers()).ok_or(ApiError::Unauthorized)?;
-    let Identity::Worker(who) = auth.authenticate(&token).ok_or(ApiError::Unauthorized)?;
-
-    // A worker may only address its own Worker and Lease objects by name.
-    // Container access is allowed for any authenticated worker (nodeName-scoped
-    // enforcement is a documented refinement).
-    let path = request.uri().path();
-    if let Some((plural, name)) = named_path(path)
-        && matches!(plural, "workers" | "leases")
-        && name != who
+    if !auth
+        .is_initialized()
+        .map_err(|e| ApiError::Internal(e.to_string()))?
     {
-        return Err(ApiError::Forbidden);
+        return Err(ApiError::Unauthorized);
     }
-    Ok(next.run(request).await)
+    let token = bearer(request.headers()).ok_or(ApiError::Unauthorized)?;
+    match auth.authenticate(&token).ok_or(ApiError::Unauthorized)? {
+        Identity::Admin => Ok(next.run(request).await),
+        Identity::Worker(who) => {
+            // A worker may only address its own Worker and Lease objects by name.
+            // Container access is allowed for any authenticated worker
+            // (nodeName-scoped enforcement is a documented refinement).
+            let path = request.uri().path();
+            if let Some((plural, name)) = named_path(path)
+                && matches!(plural, "workers" | "leases")
+                && name != who
+            {
+                return Err(ApiError::Forbidden);
+            }
+            Ok(next.run(request).await)
+        }
+    }
+}
+
+/// Require a valid admin token, failing closed. Also enforces the initialization
+/// gate: an uninitialized server has no admin and so rejects.
+fn require_admin(auth: &Arc<dyn AuthService>, headers: &HeaderMap) -> Result<(), ApiError> {
+    if !auth
+        .is_initialized()
+        .map_err(|e| ApiError::Internal(e.to_string()))?
+    {
+        return Err(ApiError::Unauthorized);
+    }
+    let token = bearer(headers).ok_or(ApiError::Unauthorized)?;
+    match auth.authenticate(&token) {
+        Some(Identity::Admin) => Ok(()),
+        Some(Identity::Worker(_)) => Err(ApiError::Forbidden),
+        None => Err(ApiError::Unauthorized),
+    }
 }
 
 /// Extract `(plural, name)` from `/api/v1/{plural}/{name}[/...]`, if present.
@@ -538,6 +568,141 @@ fn named_path(path: &str) -> Option<(&str, &str)> {
         return None;
     }
     Some((plural, name))
+}
+
+/// TTL of a UI session token (the browser's bearer).
+const SESSION_TTL_SECS: i64 = 12 * 3600;
+/// Default TTL of a CLI token when the caller does not specify one.
+const CLI_TOKEN_TTL_SECS: i64 = 365 * 24 * 3600;
+
+/// `GET /auth/v1/status` — always open; lets clients pick setup vs login.
+async fn auth_status(State(state): State<AppState>) -> Result<Json<Value>, ApiError> {
+    let auth = state.auth.as_ref().ok_or(ApiError::NotFound)?;
+    let initialized = auth
+        .is_initialized()
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    Ok(Json(serde_json::json!({ "initialized": initialized })))
+}
+
+/// `POST /auth/v1/setup` — single-shot admin account creation. Body `{username,password}`.
+async fn setup(
+    State(state): State<AppState>,
+    Json(req): Json<Value>,
+) -> Result<Json<Value>, ApiError> {
+    let auth = state.auth.as_ref().ok_or(ApiError::NotFound)?;
+    let username = req
+        .get("username")
+        .and_then(Value::as_str)
+        .ok_or_else(|| ApiError::BadRequest("username required".into()))?;
+    let password = req
+        .get("password")
+        .and_then(Value::as_str)
+        .ok_or_else(|| ApiError::BadRequest("password required".into()))?;
+    match auth.setup_admin(username, &Secret::new(password)) {
+        Ok(()) => Ok(Json(serde_json::json!({ "initialized": true }))),
+        Err(AuthError::AlreadyInitialized) => Err(ApiError::Conflict("already initialized".into())),
+        Err(AuthError::Invalid) => Err(ApiError::BadRequest("invalid setup".into())),
+        Err(e) => Err(ApiError::Internal(e.to_string())),
+    }
+}
+
+/// `POST /auth/v1/login` — username+password -> short-TTL session token.
+async fn login(
+    State(state): State<AppState>,
+    Json(req): Json<Value>,
+) -> Result<Json<Value>, ApiError> {
+    let auth = state.auth.as_ref().ok_or(ApiError::NotFound)?;
+    let username = req
+        .get("username")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let password = req
+        .get("password")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    auth.verify_password(username, &Secret::new(password))
+        .map_err(|_| ApiError::Unauthorized)?;
+    let token = auth
+        .mint_admin_session(SESSION_TTL_SECS)
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    Ok(Json(serde_json::json!({ "token": token })))
+}
+
+/// `GET /auth/v1/me` — echo the caller's identity (used by `velosctl login`).
+async fn whoami(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<Value>, ApiError> {
+    let auth = state.auth.as_ref().ok_or(ApiError::NotFound)?;
+    let token = bearer(&headers).ok_or(ApiError::Unauthorized)?;
+    let id = match auth.authenticate(&token).ok_or(ApiError::Unauthorized)? {
+        Identity::Admin => serde_json::json!("admin"),
+        Identity::Worker(w) => serde_json::json!({ "worker": w }),
+    };
+    Ok(Json(serde_json::json!({ "identity": id })))
+}
+
+/// `GET /auth/v1/admin/tokens` — list admin-token metadata (admin-only).
+async fn list_tokens(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<Value>, ApiError> {
+    let auth = state.auth.as_ref().ok_or(ApiError::NotFound)?;
+    require_admin(auth, &headers)?;
+    let items = auth
+        .list_admin_tokens()
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let items: Vec<Value> = items
+        .into_iter()
+        .map(|t| {
+            serde_json::json!({
+                "id": t.id,
+                "label": t.label,
+                "kind": t.kind,
+                "createdAt": t.created_at,
+                "expiresAt": t.expires_at,
+            })
+        })
+        .collect();
+    Ok(Json(serde_json::json!({ "items": items })))
+}
+
+/// `POST /auth/v1/admin/tokens` — mint a named CLI token (admin-only). The
+/// secret is returned exactly once. Body `{ label, ttlSeconds? }`.
+async fn create_token(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(req): Json<Value>,
+) -> Result<Json<Value>, ApiError> {
+    let auth = state.auth.as_ref().ok_or(ApiError::NotFound)?;
+    require_admin(auth, &headers)?;
+    let label = req
+        .get("label")
+        .and_then(Value::as_str)
+        .ok_or_else(|| ApiError::BadRequest("label required".into()))?;
+    let ttl = req
+        .get("ttlSeconds")
+        .and_then(Value::as_i64)
+        .unwrap_or(CLI_TOKEN_TTL_SECS);
+    let minted = auth
+        .mint_cli_token(label, ttl)
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    Ok(Json(
+        serde_json::json!({ "id": minted.id, "token": minted.token }),
+    ))
+}
+
+/// `DELETE /auth/v1/admin/tokens/:id` — revoke an admin token (admin-only).
+async fn revoke_token(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Result<Json<Value>, ApiError> {
+    let auth = state.auth.as_ref().ok_or(ApiError::NotFound)?;
+    require_admin(auth, &headers)?;
+    auth.revoke_admin_token(&id)
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    Ok(Json(serde_json::json!({ "revoked": id })))
 }
 
 fn api_routes() -> Router<AppState> {
@@ -605,6 +770,15 @@ pub fn app_with_auth(store: Arc<dyn Store>, auth: Arc<dyn AuthService>) -> Route
         require_auth,
     ));
     Router::new()
+        .route("/auth/v1/status", get(auth_status))
+        .route("/auth/v1/setup", post(setup))
+        .route("/auth/v1/login", post(login))
+        .route("/auth/v1/me", get(whoami))
+        .route("/auth/v1/admin/tokens", get(list_tokens).post(create_token))
+        .route(
+            "/auth/v1/admin/tokens/:id",
+            axum::routing::delete(revoke_token),
+        )
         .route("/auth/v1/tokens", post(mint_token))
         .route("/auth/v1/register", post(register))
         .merge(protected)
@@ -1048,20 +1222,249 @@ mod tests {
         app.clone().oneshot(req).await.unwrap()
     }
 
-    #[tokio::test]
-    async fn auth_flow_mint_register_then_scoped_access() {
+    /// Build an auth-enabled app over a shared in-memory store.
+    fn auth_app() -> axum::Router {
         let store: Arc<dyn velos_store::Store> =
             Arc::new(velos_store::SqliteStore::in_memory().unwrap());
         let auth = Arc::new(velos_auth::StoreAuthenticator::new(Arc::clone(&store)));
-        let app = app_with_auth(store, auth);
+        app_with_auth(store, auth)
+    }
 
-        // Mint a bootstrap token.
+    /// Set up the admin account and log in, returning a session token.
+    async fn setup_and_login(app: &axum::Router) -> String {
+        let resp = send(
+            app,
+            Request::builder()
+                .method("POST")
+                .uri("/auth/v1/setup")
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"username":"admin","password":"pw"}"#))
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let resp = send(
+            app,
+            Request::builder()
+                .method("POST")
+                .uri("/auth/v1/login")
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"username":"admin","password":"pw"}"#))
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        body_json(resp).await["token"].as_str().unwrap().to_string()
+    }
+
+    #[tokio::test]
+    async fn uninitialized_server_only_allows_status_and_setup() {
+        let app = auth_app();
+
+        // status is open and reports uninitialized
+        let resp = send(
+            &app,
+            Request::builder()
+                .uri("/auth/v1/status")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(
+            body_json(resp).await["initialized"],
+            serde_json::json!(false)
+        );
+
+        // any /api/v1 call is rejected while uninitialized
+        let resp = send(
+            &app,
+            Request::builder()
+                .uri("/api/v1/containers")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+
+        // bootstrap mint is rejected while uninitialized
         let resp = send(
             &app,
             Request::builder()
                 .method("POST")
                 .uri("/auth/v1/tokens")
                 .header("content-type", "application/json")
+                .body(Body::from("{}"))
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn admin_setup_login_token_flow() {
+        let app = auth_app();
+        let session = setup_and_login(&app).await;
+
+        // setup again -> 409
+        let resp = send(
+            &app,
+            Request::builder()
+                .method("POST")
+                .uri("/auth/v1/setup")
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"username":"x","password":"y"}"#))
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::CONFLICT);
+
+        // bad password -> 401
+        let resp = send(
+            &app,
+            Request::builder()
+                .method("POST")
+                .uri("/auth/v1/login")
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"username":"admin","password":"WRONG"}"#))
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+
+        // me -> admin
+        let resp = send(
+            &app,
+            Request::builder()
+                .uri("/auth/v1/me")
+                .header("authorization", format!("Bearer {session}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(
+            body_json(resp).await["identity"],
+            serde_json::json!("admin")
+        );
+
+        // admin can mint a bootstrap token now
+        let resp = send(
+            &app,
+            Request::builder()
+                .method("POST")
+                .uri("/auth/v1/tokens")
+                .header("content-type", "application/json")
+                .header("authorization", format!("Bearer {session}"))
+                .body(Body::from("{}"))
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn admin_can_create_list_and_revoke_cli_tokens() {
+        let app = auth_app();
+        let session = setup_and_login(&app).await;
+
+        // create a CLI token
+        let resp = send(
+            &app,
+            Request::builder()
+                .method("POST")
+                .uri("/auth/v1/admin/tokens")
+                .header("content-type", "application/json")
+                .header("authorization", format!("Bearer {session}"))
+                .body(Body::from(r#"{"label":"laptop"}"#))
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let created = body_json(resp).await;
+        let cli_token = created["token"].as_str().unwrap().to_string();
+        let id = created["id"].as_str().unwrap().to_string();
+
+        // the CLI token works on /api/v1
+        let resp = send(
+            &app,
+            Request::builder()
+                .uri("/api/v1/containers")
+                .header("authorization", format!("Bearer {cli_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        // list shows it (no secret)
+        let resp = send(
+            &app,
+            Request::builder()
+                .uri("/auth/v1/admin/tokens")
+                .header("authorization", format!("Bearer {session}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+        let list = body_json(resp).await;
+        assert!(
+            list["items"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|t| t["id"] == serde_json::json!(id))
+        );
+
+        // a non-admin (no token) cannot list
+        let resp = send(
+            &app,
+            Request::builder()
+                .uri("/auth/v1/admin/tokens")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+
+        // revoke -> CLI token no longer authenticates
+        let resp = send(
+            &app,
+            Request::builder()
+                .method("DELETE")
+                .uri(format!("/auth/v1/admin/tokens/{id}"))
+                .header("authorization", format!("Bearer {session}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let resp = send(
+            &app,
+            Request::builder()
+                .uri("/api/v1/containers")
+                .header("authorization", format!("Bearer {cli_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn auth_flow_mint_register_then_scoped_access() {
+        let app = auth_app();
+        // Bootstrap minting is now admin-only: set up + log in first.
+        let session = setup_and_login(&app).await;
+
+        // Mint a bootstrap token (as admin).
+        let resp = send(
+            &app,
+            Request::builder()
+                .method("POST")
+                .uri("/auth/v1/tokens")
+                .header("content-type", "application/json")
+                .header("authorization", format!("Bearer {session}"))
                 .body(Body::from(
                     serde_json::json!({ "ttlSeconds": 60 }).to_string(),
                 ))

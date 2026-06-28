@@ -6,8 +6,8 @@
 
 use std::sync::Arc;
 
-use velos_apiserver::{app, controllers};
 use velos_runtime::FakeRuntime;
+use velos_server::{app, controllers};
 use velos_store::{SqliteStore, Store};
 use veloslet::{ApiClient, run_once};
 
@@ -105,4 +105,97 @@ async fn container_runs_through_full_lifecycle() {
     let c = get_container(&http, &base, "c1").await;
     assert_eq!(c["status"]["phase"], "Succeeded");
     assert_eq!(c["status"]["exitCode"], 0);
+}
+
+/// Serve an auth-enabled apiserver on an ephemeral port; return the base URL.
+async fn start_auth() -> String {
+    let store: Arc<dyn Store> = Arc::new(SqliteStore::in_memory().unwrap());
+    let auth = Arc::new(velos_auth::StoreAuthenticator::new(Arc::clone(&store)));
+    let router = velos_server::app_with_auth(store, auth);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, router).await.unwrap();
+    });
+    format!("http://{addr}")
+}
+
+#[tokio::test]
+async fn admin_auth_end_to_end() {
+    let base = start_auth().await;
+    let http = reqwest::Client::new();
+
+    // Unauthenticated /api/v1 is rejected while uninitialized.
+    let r = http
+        .get(format!("{base}/api/v1/containers"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), reqwest::StatusCode::UNAUTHORIZED);
+
+    // First-run setup, then login for a session token.
+    http.post(format!("{base}/auth/v1/setup"))
+        .json(&serde_json::json!({ "username": "admin", "password": "pw" }))
+        .send()
+        .await
+        .unwrap();
+    let session = http
+        .post(format!("{base}/auth/v1/login"))
+        .json(&serde_json::json!({ "username": "admin", "password": "pw" }))
+        .send()
+        .await
+        .unwrap()
+        .json::<serde_json::Value>()
+        .await
+        .unwrap()["token"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    // Mint a CLI token and use it on /api/v1.
+    let cli = http
+        .post(format!("{base}/auth/v1/admin/tokens"))
+        .bearer_auth(&session)
+        .json(&serde_json::json!({ "label": "ci" }))
+        .send()
+        .await
+        .unwrap()
+        .json::<serde_json::Value>()
+        .await
+        .unwrap()["token"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let r = http
+        .get(format!("{base}/api/v1/containers"))
+        .bearer_auth(&cli)
+        .send()
+        .await
+        .unwrap();
+    assert!(r.status().is_success());
+
+    // Worker bootstrap still works: admin mints, worker registers.
+    let boot = http
+        .post(format!("{base}/auth/v1/tokens"))
+        .bearer_auth(&session)
+        .json(&serde_json::json!({ "ttlSeconds": 3600 }))
+        .send()
+        .await
+        .unwrap()
+        .json::<serde_json::Value>()
+        .await
+        .unwrap();
+    let boot_tok = format!(
+        "{}.{}",
+        boot["tokenId"].as_str().unwrap(),
+        boot["secret"].as_str().unwrap()
+    );
+    let reg = http
+        .post(format!("{base}/auth/v1/register"))
+        .bearer_auth(&boot_tok)
+        .json(&serde_json::json!({ "name": "w1" }))
+        .send()
+        .await
+        .unwrap();
+    assert!(reg.status().is_success());
 }

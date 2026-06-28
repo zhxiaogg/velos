@@ -7,11 +7,11 @@ use velosctl::{collection_url, object_url, plural_for};
 #[derive(Parser, Debug)]
 #[command(name = "velosctl", version)]
 struct Cli {
-    /// apiserver base URL.
-    #[arg(long, default_value = "http://127.0.0.1:8080", global = true)]
-    server: String,
+    /// apiserver base URL (overrides VELOS_SERVER and the saved config).
+    #[arg(long, global = true)]
+    server: Option<String>,
 
-    /// Bearer credential for authenticated apiservers.
+    /// Bearer credential (overrides VELOS_TOKEN and the saved config).
     #[arg(long, global = true)]
     token: Option<String>,
 
@@ -40,6 +40,13 @@ enum Command {
     /// Bootstrap-token operations.
     #[command(subcommand)]
     Token(TokenCommand),
+    /// Validate a token against the server and save it to ~/.velos/config.
+    Login {
+        #[arg(long)]
+        token: String,
+    },
+    /// Remove the saved credential.
+    Logout,
 }
 
 #[derive(Subcommand, Debug)]
@@ -80,6 +87,19 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
     let http = reqwest::Client::new();
 
+    // Resolve server + token: flag > env > saved config (server also > default).
+    let cfg = velosctl::load_config();
+    let server = velosctl::resolve_server(
+        cli.server.as_deref(),
+        std::env::var("VELOS_SERVER").ok().as_deref(),
+        &cfg,
+    );
+    let token = velosctl::resolve_token(
+        cli.token.as_deref(),
+        std::env::var("VELOS_TOKEN").ok().as_deref(),
+        &cfg,
+    );
+
     match cli.command {
         Command::Get {
             kind,
@@ -88,20 +108,17 @@ async fn main() -> Result<()> {
         } => {
             let plural = plural_for(&kind).with_context(|| format!("unknown kind: {kind}"))?;
             let url = match &name {
-                Some(n) => object_url(&cli.server, plural, n),
-                None => collection_url(&cli.server, plural, selector.as_deref()),
+                Some(n) => object_url(&server, plural, n),
+                None => collection_url(&server, plural, selector.as_deref()),
             };
-            let resp = client(&cli.token, http.get(url)).send().await?;
+            let resp = client(&token, http.get(url)).send().await?;
             print_json(&body_or_error(resp).await?)?;
         }
         Command::Delete { kind, name } => {
             let plural = plural_for(&kind).with_context(|| format!("unknown kind: {kind}"))?;
-            let resp = client(
-                &cli.token,
-                http.delete(object_url(&cli.server, plural, &name)),
-            )
-            .send()
-            .await?;
+            let resp = client(&token, http.delete(object_url(&server, plural, &name)))
+                .send()
+                .await?;
             let status = resp.status();
             if !status.is_success() {
                 bail!("delete failed: {status}");
@@ -113,22 +130,37 @@ async fn main() -> Result<()> {
             let contents =
                 std::fs::read_to_string(&file).with_context(|| format!("reading {file}"))?;
             let body: Value = serde_json::from_str(&contents).context("parsing JSON file")?;
-            let resp = client(
-                &cli.token,
-                http.post(collection_url(&cli.server, plural, None)),
-            )
-            .json(&body)
-            .send()
-            .await?;
+            let resp = client(&token, http.post(collection_url(&server, plural, None)))
+                .json(&body)
+                .send()
+                .await?;
             print_json(&body_or_error(resp).await?)?;
         }
         Command::Token(TokenCommand::Create { ttl }) => {
-            let url = format!("{}/auth/v1/tokens", cli.server.trim_end_matches('/'));
-            let resp = client(&cli.token, http.post(url))
+            let url = format!("{}/auth/v1/tokens", server.trim_end_matches('/'));
+            let resp = client(&token, http.post(url))
                 .json(&serde_json::json!({ "ttlSeconds": ttl }))
                 .send()
                 .await?;
             print_json(&body_or_error(resp).await?)?;
+        }
+        Command::Login { token } => {
+            // Validate the token against the resolved server before saving.
+            let url = format!("{}/auth/v1/me", server.trim_end_matches('/'));
+            let resp = http.get(url).bearer_auth(&token).send().await?;
+            if !resp.status().is_success() {
+                bail!("token rejected by {server}: {}", resp.status());
+            }
+            let saved = velosctl::Config {
+                server: Some(server.clone()),
+                token: Some(token),
+            };
+            velosctl::save_config(&saved)?;
+            println!("logged in to {server}");
+        }
+        Command::Logout => {
+            velosctl::save_config(&velosctl::Config::default())?;
+            println!("logged out");
         }
     }
     Ok(())

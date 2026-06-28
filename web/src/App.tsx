@@ -1,20 +1,23 @@
 import { useEffect, useState } from "react";
-import { Box, LayoutDashboard, Server } from "lucide-react";
+import { Box, KeyRound, LayoutDashboard, LogOut, Server } from "lucide-react";
 import { useContainers, useWorkers } from "./api";
+import { logout } from "./auth";
 import { isWorkerReady } from "./format";
 import { Overview } from "./views/Overview";
 import { Workers } from "./views/Workers";
 import { Containers } from "./views/Containers";
+import { Tokens } from "./views/Tokens";
 
-type Tab = "overview" | "workers" | "containers";
+type Tab = "overview" | "workers" | "containers" | "tokens";
 
 const NAV: { id: Tab; label: string; icon: React.ReactNode }[] = [
   { id: "overview", label: "Overview", icon: <LayoutDashboard size={18} /> },
   { id: "workers", label: "Workers", icon: <Server size={18} /> },
   { id: "containers", label: "Containers", icon: <Box size={18} /> },
+  { id: "tokens", label: "Tokens", icon: <KeyRound size={18} /> },
 ];
 
-const TABS: Tab[] = ["overview", "workers", "containers"];
+const TABS: Tab[] = ["overview", "workers", "containers", "tokens"];
 
 function tabFromHash(): Tab {
   const h = window.location.hash.replace("#", "") as Tab;
@@ -106,11 +109,22 @@ export default function App() {
               {tab === "overview" && "Cluster health and capacity at a glance"}
               {tab === "workers" && "Registered nodes and their leases"}
               {tab === "containers" && "Workloads across the cluster"}
+              {tab === "tokens" && "CLI access tokens for velosctl"}
             </p>
           </div>
-          <div className="flex items-center gap-2 text-xs text-zinc-500">
-            <span className={`h-1.5 w-1.5 rounded-full transition-colors ${beat ? "bg-emerald-400" : "bg-zinc-700"}`} />
-            live · 2s
+          <div className="flex items-center gap-4 text-xs text-zinc-500">
+            <span className="flex items-center gap-2">
+              <span className={`h-1.5 w-1.5 rounded-full transition-colors ${beat ? "bg-emerald-400" : "bg-zinc-700"}`} />
+              live · 2s
+            </span>
+            <button
+              onClick={logout}
+              className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-zinc-400 transition hover:bg-white/5 hover:text-zinc-200"
+              title="Sign out"
+            >
+              <LogOut size={15} />
+              Sign out
+            </button>
           </div>
         </header>
 
@@ -118,6 +132,7 @@ export default function App() {
           {tab === "overview" && <Overview />}
           {tab === "workers" && <Workers />}
           {tab === "containers" && <Containers />}
+          {tab === "tokens" && <Tokens />}
         </div>
       </main>
     </div>

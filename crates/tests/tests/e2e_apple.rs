@@ -22,10 +22,10 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
-use velos_apiserver::app_with_auth;
-use velos_apiserver::controllers::{self, ControllerConfig};
 use velos_auth::{AuthService, StoreAuthenticator};
 use velos_runtime::{AppleContainer, ContainerRuntime, RunSpec};
+use velos_server::app_with_auth;
+use velos_server::controllers::{self, ControllerConfig};
 use velos_store::{SqliteStore, Store};
 use veloslet::{ApiClient, run_loop};
 
@@ -119,9 +119,29 @@ async fn real_container_lifecycle_with_apple_containerization() {
     let base = format!("http://{addr}");
     let http = reqwest::Client::new();
 
-    // --- Mint a bootstrap token (operator action) ---
+    // --- First-run admin setup + login (bootstrap minting is admin-only) ---
+    http.post(format!("{base}/auth/v1/setup"))
+        .json(&json!({ "username": "admin", "password": "pw" }))
+        .send()
+        .await
+        .unwrap();
+    let session: String = http
+        .post(format!("{base}/auth/v1/login"))
+        .json(&json!({ "username": "admin", "password": "pw" }))
+        .send()
+        .await
+        .unwrap()
+        .json::<Value>()
+        .await
+        .unwrap()["token"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    // --- Mint a bootstrap token (operator action, as admin) ---
     let tok: Value = http
         .post(format!("{base}/auth/v1/tokens"))
+        .bearer_auth(&session)
         .json(&json!({ "ttlSeconds": 1200 }))
         .send()
         .await

@@ -16,7 +16,7 @@ velos-store = { path = "crates/store", version = "0.1.0" }
 velos-scheduler = { path = "crates/scheduler", version = "0.1.0" }
 velos-runtime = { path = "crates/runtime", version = "0.1.0" }
 velos-auth = { path = "crates/auth", version = "0.1.0" }
-velos-apiserver = { path = "crates/apiserver", version = "0.1.0" }
+velos-server = { path = "crates/server", version = "0.1.0" }
 veloslet = { path = "crates/veloslet", version = "0.1.0" }
 
 [workspace.lints.clippy]

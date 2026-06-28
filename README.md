@@ -13,7 +13,7 @@ direction.
 
 ```
    velosctl ─┐                  ┌──────────────────────────────┐
-   (CLI)     │                  │         velos-apiserver        │
+   (CLI)     │                  │          velos-server          │
    dashboard ├───  REST  ──────▶│  REST API · scheduler ·        │
    (browser) │   (Bearer)       │  reconciliation · web UI       │
              │                  │  SQLite-backed object store    │
@@ -28,14 +28,17 @@ direction.
 
 ## Components
 
-- **`velos-apiserver`** — the control plane. Serves the REST API, persists objects
+- **`velos-server`** — the control plane. Serves the REST API, persists objects
   in SQLite, runs the scheduler and reconciliation loops, and serves the web
-  dashboard (embedded in the binary).
+  dashboard (embedded in the binary). Bind address and DB path are configurable
+  via `--listen`/`VELOS_LISTEN` and `--db`/`VELOS_DB`.
 - **`veloslet`** — the per-worker agent. Registers its machine, renews a lease to
   prove liveness, and reconciles its assigned containers against the runtime.
-- **`velosctl`** — a command-line client for the API.
-- **Web dashboard** — a React UI for watching workers and containers and launching
-  workloads, served directly by the apiserver.
+- **`velosctl`** — a command-line client for the API. `velosctl login` saves an
+  admin token (and server URL) to `~/.velos/config` for subsequent calls.
+- **Web dashboard** — a React UI for first-run admin setup, watching workers and
+  containers, launching workloads, and managing CLI tokens, served directly by the
+  apiserver.
 
 ## Resource model
 
@@ -53,15 +56,18 @@ under `/api/v1/{plural}`:
 Install with cargo:
 
 ```bash
-cargo install velos-apiserver velosctl veloslet
+cargo install velos-server velosctl veloslet
 ```
 
 …or build from source with `make build` (which also builds the embedded dashboard).
 
 Then follow **[docs/getting-started.md](docs/getting-started.md)** for the full
-walkthrough: start the control plane, register a worker, launch containers, and
-open the dashboard at `http://127.0.0.1:8080`. (Running a worker currently
-requires the Apple `container` CLI; the control plane, CLI, and dashboard do not.)
+walkthrough: start the control plane, set up the admin account and connect
+`velosctl`, register a worker, launch containers, and open the dashboard at
+`http://127.0.0.1:8080`. On first run the dashboard prompts you to create the
+admin account; from there you mint a CLI token for `velosctl`. (Running a worker
+currently requires the Apple `container` CLI; the control plane, CLI, and
+dashboard do not.)
 
 ## Development
 

@@ -8,11 +8,14 @@
 
 use std::sync::Arc;
 
+use argon2::Argon2;
+use argon2::password_hash::rand_core::OsRng;
+use argon2::password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
 use chrono::{DateTime, Duration, Utc};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 use uuid::Uuid;
-use velos_store::{Store, StoreError, StoredObject};
+use velos_store::{Selector, Store, StoreError, StoredObject};
 
 /// A credential secret. Constructable and hashable, but it never reveals itself
 /// through `Debug`/`Display`/`Serialize`; callers must opt in via [`Secret::expose`].
@@ -54,14 +57,45 @@ pub enum AuthError {
     Invalid,
     #[error("token expired")]
     Expired,
+    #[error("already initialized")]
+    AlreadyInitialized,
     #[error("store error: {0}")]
     Store(#[from] StoreError),
+}
+
+/// argon2id PHC-string hash of a password (salt embedded). Used for the human
+/// admin password only; high-entropy random tokens keep the SHA-256 path.
+fn hash_password(password: &Secret) -> Result<String, AuthError> {
+    let salt = SaltString::generate(&mut OsRng);
+    Argon2::default()
+        .hash_password(password.expose().as_bytes(), &salt)
+        .map(|h| h.to_string())
+        .map_err(|_| AuthError::Invalid)
+}
+
+/// Verify a password against a stored PHC string; `false` on any parse/verify error.
+fn verify_password_hash(hash: &str, password: &Secret) -> bool {
+    match PasswordHash::new(hash) {
+        Ok(parsed) => Argon2::default()
+            .verify_password(password.expose().as_bytes(), &parsed)
+            .is_ok(),
+        Err(_) => false,
+    }
+}
+
+/// Extract a string field from a stored document, or empty string if absent.
+fn str_field(doc: &serde_json::Value, key: &str) -> String {
+    doc.get(key)
+        .and_then(|v| v.as_str())
+        .unwrap_or_default()
+        .to_string()
 }
 
 /// The result of authenticating a bearer credential.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Identity {
     Worker(String),
+    Admin,
 }
 
 /// A freshly minted bootstrap token. The `secret` is shown exactly once.
@@ -85,6 +119,52 @@ pub trait AuthService: Send + Sync {
     fn authenticate(&self, presented: &str) -> Option<Identity>;
     /// Revoke a worker's credential (tombstone); its next call fails closed.
     fn revoke_credential(&self, worker: &str) -> Result<(), AuthError>;
+
+    /// Whether the admin account has been set up. Until it is, the apiserver
+    /// reaches only `status`/`setup` (the initialization gate).
+    fn is_initialized(&self) -> Result<bool, AuthError>;
+    /// Create the single admin account; fails closed if already initialized.
+    fn setup_admin(&self, username: &str, password: &Secret) -> Result<(), AuthError>;
+    /// Verify an admin `username`+`password`, failing closed.
+    fn verify_password(&self, username: &str, password: &Secret) -> Result<(), AuthError>;
+    /// Mint a short-lived admin session token (the UI's bearer).
+    fn mint_admin_session(&self, ttl_secs: i64) -> Result<String, AuthError>;
+    /// Mint a long-lived, named admin CLI token; the secret is returned once.
+    fn mint_cli_token(&self, label: &str, ttl_secs: i64) -> Result<MintedToken, AuthError>;
+    /// List admin-token metadata (never the secrets).
+    fn list_admin_tokens(&self) -> Result<Vec<AdminTokenInfo>, AuthError>;
+    /// Revoke an admin token by id; its next call fails closed.
+    fn revoke_admin_token(&self, id: &str) -> Result<(), AuthError>;
+}
+
+/// A freshly minted admin token; `token` (= `id.secret`) is shown exactly once.
+#[derive(Debug)]
+pub struct MintedToken {
+    pub id: String,
+    pub token: String,
+}
+
+/// Listable metadata for an admin token. Never carries the secret.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AdminTokenInfo {
+    pub id: String,
+    pub label: String,
+    pub kind: String,
+    pub created_at: String,
+    pub expires_at: String,
+}
+
+/// Resolves a presented bearer credential to an [`Identity`], or `None` (fail
+/// closed). The apiserver depends on this so an external OIDC verifier can be
+/// substituted later without touching any endpoint (deep-module seam).
+pub trait TokenVerifier: Send + Sync {
+    fn verify(&self, presented: &str) -> Option<Identity>;
+}
+
+impl TokenVerifier for StoreAuthenticator {
+    fn verify(&self, presented: &str) -> Option<Identity> {
+        self.authenticate(presented)
+    }
 }
 
 /// Persists hashed tokens/credentials in the `Store` under kinds that the REST
@@ -95,6 +175,11 @@ pub struct StoreAuthenticator {
 
 const KIND_TOKEN: &str = "BootstrapToken";
 const KIND_CRED: &str = "WorkerCredential";
+const KIND_ADMIN: &str = "AdminAccount";
+const KIND_ADMIN_TOKEN: &str = "AdminToken";
+
+/// The admin account lives under a single well-known row (single-admin scope).
+const ADMIN_ROW: &str = "admin";
 
 impl StoreAuthenticator {
     pub fn new(store: Arc<dyn Store>) -> Self {
@@ -113,6 +198,35 @@ impl StoreAuthenticator {
             document,
         })?;
         Ok(())
+    }
+
+    /// Mint and persist an admin token (session or CLI), returning the one-time
+    /// `id.secret`. Only the hash is stored.
+    fn mint_admin_token(
+        &self,
+        label: &str,
+        kind: &str,
+        ttl_secs: i64,
+    ) -> Result<MintedToken, AuthError> {
+        let id = Uuid::new_v4().simple().to_string();
+        let secret = Secret::generate();
+        let now = Utc::now();
+        let expires_at = now + Duration::seconds(ttl_secs);
+        self.write(
+            KIND_ADMIN_TOKEN,
+            &id,
+            serde_json::json!({
+                "secretHash": secret.hash(),
+                "label": label,
+                "kind": kind,
+                "createdAt": now.to_rfc3339(),
+                "expiresAt": expires_at.to_rfc3339(),
+            }),
+        )?;
+        Ok(MintedToken {
+            token: format!("{id}.{}", secret.expose()),
+            id,
+        })
     }
 }
 
@@ -180,11 +294,28 @@ impl AuthService for StoreAuthenticator {
     }
 
     fn authenticate(&self, presented: &str) -> Option<Identity> {
-        let (worker, secret) = split_credential(presented)?;
-        let rec = self.store.get(KIND_CRED, worker).ok()??;
+        let (id, secret) = split_credential(presented)?;
+
+        // Admin token (session or CLI): unexpired + hash match -> Admin.
+        if let Ok(Some(rec)) = self.store.get(KIND_ADMIN_TOKEN, id) {
+            let stored = rec.document.get("secretHash").and_then(|v| v.as_str())?;
+            let expires = rec
+                .document
+                .get("expiresAt")
+                .and_then(|v| v.as_str())
+                .and_then(|s| DateTime::parse_from_rfc3339(s).ok())?
+                .with_timezone(&Utc);
+            if stored == secret.hash() && Utc::now() < expires {
+                return Some(Identity::Admin);
+            }
+            return None;
+        }
+
+        // Otherwise a worker credential.
+        let rec = self.store.get(KIND_CRED, id).ok()??;
         let stored = rec.document.get("tokenHash").and_then(|v| v.as_str())?;
         if stored == secret.hash() {
-            Some(Identity::Worker(worker.to_string()))
+            Some(Identity::Worker(id.to_string()))
         } else {
             None
         }
@@ -192,6 +323,72 @@ impl AuthService for StoreAuthenticator {
 
     fn revoke_credential(&self, worker: &str) -> Result<(), AuthError> {
         self.store.delete(KIND_CRED, worker)?;
+        Ok(())
+    }
+
+    fn is_initialized(&self) -> Result<bool, AuthError> {
+        Ok(self.store.get(KIND_ADMIN, ADMIN_ROW)?.is_some())
+    }
+
+    fn setup_admin(&self, username: &str, password: &Secret) -> Result<(), AuthError> {
+        if username.is_empty() {
+            return Err(AuthError::Invalid);
+        }
+        if self.is_initialized()? {
+            return Err(AuthError::AlreadyInitialized);
+        }
+        let hash = hash_password(password)?;
+        self.write(
+            KIND_ADMIN,
+            ADMIN_ROW,
+            serde_json::json!({ "username": username, "passwordHash": hash }),
+        )
+    }
+
+    fn verify_password(&self, username: &str, password: &Secret) -> Result<(), AuthError> {
+        let rec = self
+            .store
+            .get(KIND_ADMIN, ADMIN_ROW)?
+            .ok_or(AuthError::Invalid)?;
+        if rec.document.get("username").and_then(|v| v.as_str()) != Some(username) {
+            return Err(AuthError::Invalid);
+        }
+        let hash = rec
+            .document
+            .get("passwordHash")
+            .and_then(|v| v.as_str())
+            .ok_or(AuthError::Invalid)?;
+        if verify_password_hash(hash, password) {
+            Ok(())
+        } else {
+            Err(AuthError::Invalid)
+        }
+    }
+
+    fn mint_admin_session(&self, ttl_secs: i64) -> Result<String, AuthError> {
+        Ok(self.mint_admin_token("session", "session", ttl_secs)?.token)
+    }
+
+    fn mint_cli_token(&self, label: &str, ttl_secs: i64) -> Result<MintedToken, AuthError> {
+        self.mint_admin_token(label, "cli", ttl_secs)
+    }
+
+    fn list_admin_tokens(&self) -> Result<Vec<AdminTokenInfo>, AuthError> {
+        let objs = self.store.list(KIND_ADMIN_TOKEN, &Selector::default())?;
+        Ok(objs
+            .into_iter()
+            .map(|o| AdminTokenInfo {
+                id: o.name,
+                label: str_field(&o.document, "label"),
+                kind: str_field(&o.document, "kind"),
+                created_at: str_field(&o.document, "createdAt"),
+                expires_at: str_field(&o.document, "expiresAt"),
+            })
+            .collect())
+    }
+
+    fn revoke_admin_token(&self, id: &str) -> Result<(), AuthError> {
+        self.store.delete(KIND_ADMIN_TOKEN, id)?;
         Ok(())
     }
 }
@@ -254,5 +451,72 @@ mod tests {
 
         a.revoke_credential("w1").unwrap();
         assert_eq!(a.authenticate(&cred), None);
+    }
+
+    #[test]
+    fn admin_setup_is_single_shot_and_password_round_trips() {
+        let a = auth();
+        assert!(!a.is_initialized().unwrap());
+
+        a.setup_admin("admin", &Secret::new("hunter2")).unwrap();
+        assert!(a.is_initialized().unwrap());
+
+        // correct password verifies
+        assert!(a.verify_password("admin", &Secret::new("hunter2")).is_ok());
+        // wrong password fails closed
+        assert!(a.verify_password("admin", &Secret::new("nope")).is_err());
+        // wrong username fails closed
+        assert!(a.verify_password("root", &Secret::new("hunter2")).is_err());
+
+        // second setup is rejected
+        assert!(matches!(
+            a.setup_admin("admin2", &Secret::new("x")),
+            Err(AuthError::AlreadyInitialized)
+        ));
+    }
+
+    #[test]
+    fn password_hash_is_salted_and_not_plaintext() {
+        let h1 = hash_password(&Secret::new("same")).unwrap();
+        let h2 = hash_password(&Secret::new("same")).unwrap();
+        assert_ne!(h1, h2, "salts differ");
+        assert!(!h1.contains("same"));
+        assert!(verify_password_hash(&h1, &Secret::new("same")));
+        assert!(!verify_password_hash(&h1, &Secret::new("different")));
+    }
+
+    #[test]
+    fn admin_tokens_authenticate_expire_and_revoke() {
+        let a = auth();
+        let session = a.mint_admin_session(60).unwrap();
+        assert_eq!(a.authenticate(&session), Some(Identity::Admin));
+
+        let cli = a.mint_cli_token("laptop", 3600).unwrap();
+        assert_eq!(a.authenticate(&cli.token), Some(Identity::Admin));
+
+        // listing shows the cli token's metadata, never the secret
+        let listed = a.list_admin_tokens().unwrap();
+        assert!(listed.iter().any(|t| t.id == cli.id && t.label == "laptop"));
+
+        // revoke -> fails closed
+        a.revoke_admin_token(&cli.id).unwrap();
+        assert_eq!(a.authenticate(&cli.token), None);
+
+        // expired token fails closed
+        let dead = a.mint_cli_token("old", -1).unwrap();
+        assert_eq!(a.authenticate(&dead.token), None);
+
+        // a worker credential still resolves as a worker, not admin
+        let cred = a.issue_credential("w1").unwrap();
+        assert_eq!(a.authenticate(&cred), Some(Identity::Worker("w1".into())));
+    }
+
+    #[test]
+    fn token_verifier_delegates_to_authenticate() {
+        let a = auth();
+        let session = a.mint_admin_session(60).unwrap();
+        let v: &dyn TokenVerifier = &a;
+        assert_eq!(v.verify(&session), Some(Identity::Admin));
+        assert_eq!(v.verify("garbage"), None);
     }
 }
