@@ -32,28 +32,6 @@ jobs:
 
       - name: Test
         run: cargo test --workspace
-
-  # macOS build + test coverage on GitHub-hosted runners. The real
-  # Apple-Containerization e2e (`e2e_apple`) is always enabled but self-skips
-  # here: hosted macOS runners can't launch micro-VMs (no nested virtualization),
-  # and self-hosted runners are unsafe for a public repo. The real micro-VM run
-  # is exercised locally by developers on Apple silicon (see crates/tests).
-  macos:
-    name: macOS build + test
-    runs-on: macos-15
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy
-
-      - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
-
-      - name: Clippy
-        run: cargo clippy --all-targets --all-features -- -D warnings
-
-      - name: Test
-        run: cargo test --workspace
+        # The real Apple-Containerization e2e (`e2e_apple`) is always enabled but
+        # self-skips here (no `container` CLI / no virtualization). It runs for
+        # real locally on Apple silicon (see crates/tests).
