@@ -31,6 +31,14 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
+      # The web UI is not committed; build it just-in-time so `include` bakes it
+      # into the published velos-apiserver crate.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Build web UI
+        run: cd web && npm ci && npm run build
+
       - name: Authenticate with crates.io (OIDC)
         id: auth
         uses: rust-lang/crates-io-auth-action@v1
@@ -55,7 +63,9 @@ jobs:
                 continue
               fi
               remaining=1
-              if cargo publish -p "$name" --locked; then progress=1; fi
+              # --allow-dirty: the built UI is gitignored but pulled in via the
+              # crate's `include`, which cargo otherwise treats as a dirty tree.
+              if cargo publish -p "$name" --locked --allow-dirty; then progress=1; fi
             done
             [ "$remaining" = 0 ] && exit 0
             [ "$progress" = 0 ] && { echo "no progress in pass $pass"; exit 1; }
@@ -95,6 +105,13 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
+
+      # Build the (uncommitted) web UI so it is embedded into velos-apiserver.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Build web UI
+        run: cd web && npm ci && npm run build
 
       - name: Build
         run: cargo build --release --locked --target ${{ matrix.target }} -p velos-apiserver -p veloslet -p velosctl

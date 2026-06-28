@@ -1,2 +1,7 @@
 /target
 *.db
+
+# The built web UI is generated just-in-time (`make web` / CI), not committed.
+# A tracked .gitkeep keeps the folder present so rust-embed compiles without it.
+/crates/apiserver/ui/*
+!/crates/apiserver/ui/.gitkeep

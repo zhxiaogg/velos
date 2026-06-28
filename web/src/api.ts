@@ -1,15 +1,30 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { forgetCredential, getCredential } from "./auth";
 import type { Container, Lease, List, RestartPolicy, Worker } from "./types";
 
-// Everything is proxied through the Vite dev server, which injects the Bearer
-// credential. The browser just talks to a same-origin `/velos` prefix.
-const BASE = "/velos/api/v1";
+// The API is same-origin: the apiserver serves this bundle in production, and
+// the Vite dev server proxies these paths to it. The browser supplies its own
+// Bearer credential (see ./auth).
+const BASE = "/api/v1";
 
-async function http<T>(path: string, init?: RequestInit): Promise<T> {
+async function send<T>(path: string, init: RequestInit, retry = true): Promise<T> {
+  const cred = await getCredential();
   const res = await fetch(`${BASE}${path}`, {
     ...init,
-    headers: { "content-type": "application/json", ...(init?.headers ?? {}) },
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${cred}`,
+      ...(init.headers ?? {}),
+    },
   });
+
+  // A stale credential (e.g. the server's store was reset) — drop it and retry
+  // once with a freshly minted one.
+  if (res.status === 401 && retry) {
+    forgetCredential();
+    return send<T>(path, init, false);
+  }
+
   if (!res.ok) {
     let detail = "";
     try {
@@ -22,6 +37,8 @@ async function http<T>(path: string, init?: RequestInit): Promise<T> {
   if (res.status === 204) return undefined as T;
   return res.json() as Promise<T>;
 }
+
+const http = <T>(path: string, init: RequestInit = {}): Promise<T> => send<T>(path, init);
 
 const REFRESH_MS = 2000;
 

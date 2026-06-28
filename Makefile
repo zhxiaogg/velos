@@ -1,7 +1,12 @@
-.PHONY: build test fmt clippy check run
+.PHONY: build web test fmt clippy check run
 
-build:
+# Build the web UI into crates/apiserver/ui (embedded by the apiserver) and then
+# the whole workspace. Run `make web` alone to rebuild just the dashboard.
+build: web
 	cargo build --workspace
+
+web:
+	cd web && npm install && npm run build
 
 test:
 	cargo test --workspace

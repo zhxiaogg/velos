@@ -5,6 +5,10 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "The Velos control-plane API server: REST surface, scheduler, and controllers."
+# The built UI (ui/) is gitignored and produced just-in-time. An explicit
+# `include` overrides gitignore at package time, so a CI build that populated
+# ui/ is still baked into the published crate (keeping `cargo install` working).
+include = ["src/**/*", "ui/**/*"]
 
 [lints]
 workspace = true
@@ -33,6 +37,10 @@ thiserror = "1.0"
 anyhow = "1.0"
 tracing = "0.1"
 tracing-subscriber = "0.3"
+# Embeds the built web UI (crates/apiserver/ui) into the binary so the apiserver
+# can serve the dashboard with no separate process. Debug builds read from disk;
+# release builds embed at compile time.
+rust-embed = { version = "8", features = ["mime-guess"] }
 
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }

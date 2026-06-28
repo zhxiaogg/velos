@@ -92,7 +92,7 @@ export default function App() {
             <span className={`h-2 w-2 rounded-full ${isError ? "bg-rose-500" : "bg-emerald-400 live-dot"}`} />
             {isError ? "apiserver unreachable" : `${ready} worker${ready === 1 ? "" : "s"} ready`}
           </div>
-          <div className="mt-1 text-zinc-600">127.0.0.1:8080</div>
+          <div className="mt-1 text-zinc-600">{window.location.host}</div>
         </div>
       </aside>
 
