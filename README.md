@@ -38,7 +38,7 @@ direction.
   admin token (and server URL) to `~/.velos/config` for subsequent calls.
 - **Web dashboard** — a React UI for first-run admin setup, watching workers and
   containers, launching workloads, and managing CLI tokens, served directly by the
-  apiserver.
+  server.
 
 ## Resource model
 
@@ -73,10 +73,10 @@ dashboard do not.)
 
 ```bash
 make build     # build the web UI + workspace
-make web       # rebuild just the web UI (embedded by the apiserver)
+make web       # rebuild just the web UI (embedded by the server)
 make test      # cargo test --workspace
 make check     # fmt --check + clippy -D warnings + test  (pre-PR gate)
-make run       # run the apiserver
+make run       # run the server
 ```
 
 Engineering conventions and the design philosophy live in [`CLAUDE.md`](CLAUDE.md).

@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { logout, sessionToken } from "./auth";
 import type { Container, Lease, List, RestartPolicy, Worker } from "./types";
 
-// The API is same-origin: the apiserver serves this bundle in production, and
+// The API is same-origin: the server serves this bundle in production, and
 // the Vite dev server proxies these paths to it. The browser sends its admin
 // session token (see ./auth) as a Bearer on every call.
 const BASE = "/api/v1";

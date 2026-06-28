@@ -1,4 +1,4 @@
-//! End-to-end: real apiserver (in-process, over TCP) + a `veloslet` driving a
+//! End-to-end: real server (in-process, over TCP) + a `veloslet` driving a
 //! `FakeRuntime`, exercising the container happy path Pending → Scheduled →
 //! Running → Succeeded through the public REST API.
 
@@ -11,7 +11,7 @@ use velos_server::{app, controllers};
 use velos_store::{SqliteStore, Store};
 use veloslet::{ApiClient, run_once};
 
-/// Bind an ephemeral port, serve the apiserver in the background, and return the
+/// Bind an ephemeral port, serve the server in the background, and return the
 /// base URL plus the shared store (so the test can drive controllers directly).
 async fn start() -> (String, Arc<dyn Store>) {
     let store: Arc<dyn Store> = Arc::new(SqliteStore::in_memory().unwrap());
@@ -107,7 +107,7 @@ async fn container_runs_through_full_lifecycle() {
     assert_eq!(c["status"]["exitCode"], 0);
 }
 
-/// Serve an auth-enabled apiserver on an ephemeral port; return the base URL.
+/// Serve an auth-enabled server on an ephemeral port; return the base URL.
 async fn start_auth() -> String {
     let store: Arc<dyn Store> = Arc::new(SqliteStore::in_memory().unwrap());
     let auth = Arc::new(velos_auth::StoreAuthenticator::new(Arc::clone(&store)));

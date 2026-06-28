@@ -17,7 +17,7 @@ pub struct Config {
     pub token: Option<String>,
 }
 
-/// Resolve the apiserver URL: flag > env > config > built-in default.
+/// Resolve the server URL: flag > env > config > built-in default.
 pub fn resolve_server(flag: Option<&str>, env: Option<&str>, cfg: &Config) -> String {
     flag.map(str::to_string)
         .or_else(|| env.map(str::to_string))

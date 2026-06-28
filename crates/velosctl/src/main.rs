@@ -7,7 +7,7 @@ use velosctl::{collection_url, object_url, plural_for};
 #[derive(Parser, Debug)]
 #[command(name = "velosctl", version)]
 struct Cli {
-    /// apiserver base URL (overrides VELOS_SERVER and the saved config).
+    /// server base URL (overrides VELOS_SERVER and the saved config).
     #[arg(long, global = true)]
     server: Option<String>,
 
@@ -69,7 +69,7 @@ async fn body_or_error(resp: reqwest::Response) -> Result<Value> {
     let status = resp.status();
     let text = resp.text().await.unwrap_or_default();
     if !status.is_success() {
-        bail!("apiserver returned {status}: {text}");
+        bail!("server returned {status}: {text}");
     }
     if text.is_empty() {
         return Ok(Value::Null);

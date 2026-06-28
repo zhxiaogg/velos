@@ -1,4 +1,4 @@
-//! In-process control loops hosted by the apiserver.
+//! In-process control loops hosted by the server.
 //!
 //! Each controller follows Principle #5: a **pure** decision function maps
 //! observed state to intended actions, and a thin **actuator** applies those

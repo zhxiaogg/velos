@@ -328,7 +328,7 @@ async fn replace(
     }
 
     // Finalizer protocol: once marked for deletion and the last finalizer is
-    // cleared, the apiserver hard-deletes (and emits a Deleted event).
+    // cleared, the server hard-deletes (and emits a Deleted event).
     if is_marked_for_deletion(&body) && !has_finalizers(&body) {
         state.store.delete(kind, &name)?;
         return Ok(Json(body));
@@ -719,7 +719,7 @@ fn api_routes() -> Router<AppState> {
 // Embedded web UI
 // ---------------------------------------------------------------------------
 
-/// The built dashboard (`crates/apiserver/ui`, produced by `web`'s `npm run
+/// The built dashboard (`crates/server/ui`, produced by `web`'s `npm run
 /// build`). Debug builds read it from disk at runtime; release builds embed it.
 #[derive(rust_embed::RustEmbed)]
 #[folder = "ui/"]
@@ -751,13 +751,13 @@ async fn serve_ui(uri: Uri) -> Response {
     }
 }
 
-/// Build the apiserver with no authentication (dev / tests / e2e).
+/// Build the server with no authentication (dev / tests / e2e).
 pub fn app(store: Arc<dyn Store>) -> Router {
     let state = AppState { store, auth: None };
     api_routes().fallback(serve_ui).with_state(state)
 }
 
-/// Build the apiserver with bootstrap-token auth: `/auth/v1` endpoints are open
+/// Build the server with bootstrap-token auth: `/auth/v1` endpoints are open
 /// (they self-verify), while every `/api/v1` request must present a valid worker
 /// credential and may only touch its own Worker/Lease objects.
 pub fn app_with_auth(store: Arc<dyn Store>, auth: Arc<dyn AuthService>) -> Router {

@@ -1,6 +1,6 @@
 //! REAL end-to-end test against Apple Containerization — nothing is faked.
 //!
-//! The full pipeline runs for real: apiserver + controllers over TCP, bootstrap
+//! The full pipeline runs for real: server + controllers over TCP, bootstrap
 //! token mint, worker registration, the `veloslet` loop (lease heartbeat +
 //! reconcile) driving the actual `container` CLI, and a real micro-VM launched
 //! from a real image. It asserts the container goes Pending → Scheduled →
@@ -99,7 +99,7 @@ async fn real_container_lifecycle_with_apple_containerization() {
         }
     }
 
-    // --- Control plane: apiserver + controllers (fast intervals for the test) ---
+    // --- Control plane: server + controllers (fast intervals for the test) ---
     let store: Arc<dyn Store> = Arc::new(SqliteStore::in_memory().unwrap());
     let auth: Arc<dyn AuthService> = Arc::new(StoreAuthenticator::new(Arc::clone(&store)));
     controllers::spawn(
@@ -238,7 +238,7 @@ async fn real_container_lifecycle_with_apple_containerization() {
         .unwrap();
     assert!(resp.status().is_success());
 
-    // veloslet clears its finalizer → apiserver hard-deletes → GET 404.
+    // veloslet clears its finalizer → server hard-deletes → GET 404.
     let deadline = Instant::now() + Duration::from_secs(30);
     loop {
         let resp = http

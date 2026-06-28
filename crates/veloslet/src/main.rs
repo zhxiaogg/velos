@@ -9,7 +9,7 @@ use veloslet::{ApiClient, run_loop};
 #[derive(Parser, Debug)]
 #[command(name = "veloslet", version)]
 struct Args {
-    /// apiserver base URL, e.g. http://127.0.0.1:8080
+    /// server base URL, e.g. http://127.0.0.1:8080
     #[arg(long, default_value = "http://127.0.0.1:8080")]
     server: String,
 

@@ -1,4 +1,4 @@
-//! A thin REST client the worker uses to talk to the apiserver.
+//! A thin REST client the worker uses to talk to the server.
 //!
 //! Wire payloads are opaque `serde_json::Value`: the worker reads only the
 //! envelope fields it needs and writes status through the `/status` subresource,
@@ -11,7 +11,7 @@ use thiserror::Error;
 pub enum ClientError {
     #[error("http error: {0}")]
     Http(String),
-    #[error("apiserver returned {status}: {body}")]
+    #[error("server returned {status}: {body}")]
     Status { status: u16, body: String },
 }
 
@@ -21,7 +21,7 @@ impl From<reqwest::Error> for ClientError {
     }
 }
 
-/// REST client bound to one apiserver base URL, optionally bearer-authenticated.
+/// REST client bound to one server base URL, optionally bearer-authenticated.
 #[derive(Clone)]
 pub struct ApiClient {
     base: String,

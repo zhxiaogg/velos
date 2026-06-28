@@ -4,7 +4,7 @@
 
 **Goal:** Build a working single-node control plane that stores resources in SQLite and serves full CRUD over a Kubernetes-shaped REST API, with the fluorite-generated wire types in place.
 
-**Architecture:** A Rust crate workspace. `velos-models` generates wire types from fluorite `.fl` schemas. `velos-store` persists objects as opaque JSON documents plus index columns behind a `Store` trait (SQLite impl). `velos-apiserver` is an axum service exposing CRUD + a status subresource + label/field selectors, treating objects as opaque JSON (typed admission is a later phase). Watch, controllers, the worker daemon, and auth are out of scope for this phase.
+**Architecture:** A Rust crate workspace. `velos-models` generates wire types from fluorite `.fl` schemas. `velos-store` persists objects as opaque JSON documents plus index columns behind a `Store` trait (SQLite impl). `velos-server` is an axum service exposing CRUD + a status subresource + label/field selectors, treating objects as opaque JSON (typed admission is a later phase). Watch, controllers, the worker daemon, and auth are out of scope for this phase.
 
 **Tech Stack:** Rust (edition 2024), tokio, axum 0.7, rusqlite (bundled SQLite), serde / serde_json, fluorite (codegen 0.6.1), uuid, chrono, thiserror, anyhow, tracing.
 
@@ -40,7 +40,7 @@ velos/ (repo root = /Users/xiaoguang/work/repo/personal/sandbox)
     ├── store/
     │   ├── Cargo.toml
     │   └── src/lib.rs                 # Store trait, Selector, StoredObject, StoreError, SqliteStore
-    └── apiserver/
+    └── server/
         ├── Cargo.toml
         ├── src/lib.rs                 # Router builder, handlers, ApiError, selector parsing
         └── src/main.rs                # binary: bind TCP + axum::serve
@@ -49,7 +49,7 @@ velos/ (repo root = /Users/xiaoguang/work/repo/personal/sandbox)
 Responsibilities:
 - **`velos-models`** — the single source of truth for wire types; depends on nothing else in the workspace.
 - **`velos-store`** — generic, schema-agnostic persistence; knows nothing about HTTP or specific resource kinds.
-- **`velos-apiserver`** — HTTP surface; depends on `velos-store`. Treats objects as opaque `serde_json::Value`, extracting only the indexed envelope fields (`metadata.name`, `metadata.labels`, `spec.nodeName`).
+- **`velos-server`** — HTTP surface; depends on `velos-store`. Treats objects as opaque `serde_json::Value`, extracting only the indexed envelope fields (`metadata.name`, `metadata.labels`, `spec.nodeName`).
 
 ---
 
@@ -62,7 +62,7 @@ Responsibilities:
 - Create: `.gitignore`
 - Create: `crates/models/Cargo.toml`, `crates/models/src/lib.rs`
 - Create: `crates/store/Cargo.toml`, `crates/store/src/lib.rs`
-- Create: `crates/apiserver/Cargo.toml`, `crates/apiserver/src/lib.rs`
+- Create: `crates/server/Cargo.toml`, `crates/server/src/lib.rs`
 
 **Interfaces:**
 - Consumes: nothing.
@@ -128,7 +128,7 @@ check:
 	cargo test --workspace
 
 run:
-	cargo run -p velos-apiserver
+	cargo run -p velos-server
 ```
 
 - [ ] **Step 3: Create the three crate stubs**
@@ -173,10 +173,10 @@ workspace = true
 // Store trait and SQLite implementation are added in Tasks 3-4.
 ```
 
-`crates/apiserver/Cargo.toml`:
+`crates/server/Cargo.toml`:
 ```toml
 [package]
-name = "velos-apiserver"
+name = "velos-server"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -187,7 +187,7 @@ workspace = true
 [dependencies]
 ```
 
-`crates/apiserver/src/lib.rs`:
+`crates/server/src/lib.rs`:
 ```rust
 // HTTP surface is added in Tasks 5-7.
 ```
@@ -960,12 +960,12 @@ git commit -m "test(store): cover list selectors (kind/label/nodeName) and delet
 
 ---
 
-## Task 5: `velos-apiserver` — create + get handlers and router
+## Task 5: `velos-server` — create + get handlers and router
 
 **Files:**
-- Modify: `crates/apiserver/Cargo.toml`
-- Modify: `crates/apiserver/src/lib.rs`
-- Create: `crates/apiserver/src/main.rs`
+- Modify: `crates/server/Cargo.toml`
+- Modify: `crates/server/src/lib.rs`
+- Create: `crates/server/src/main.rs`
 
 **Interfaces:**
 - Consumes: `velos_store::{Store, SqliteStore, StoredObject, Selector, StoreError}`.
@@ -977,7 +977,7 @@ git commit -m "test(store): cover list selectors (kind/label/nodeName) and delet
 
 - [ ] **Step 1: Write the failing test**
 
-Append to `crates/apiserver/src/lib.rs`:
+Append to `crates/server/src/lib.rs`:
 ```rust
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
@@ -1076,15 +1076,15 @@ mod tests {
 
 - [ ] **Step 2: Run the test to verify it fails**
 
-Run: `cargo test -p velos-apiserver`
+Run: `cargo test -p velos-server`
 Expected: FAIL — compile error, `app`/`ApiError` not defined.
 
 - [ ] **Step 3: Add dependencies and implement create/get + router**
 
-`crates/apiserver/Cargo.toml`:
+`crates/server/Cargo.toml`:
 ```toml
 [package]
-name = "velos-apiserver"
+name = "velos-server"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -1093,11 +1093,11 @@ license.workspace = true
 workspace = true
 
 [lib]
-name = "velos_apiserver"
+name = "velos_server"
 path = "src/lib.rs"
 
 [[bin]]
-name = "velos-apiserver"
+name = "velos-server"
 path = "src/main.rs"
 
 [dependencies]
@@ -1116,7 +1116,7 @@ tracing-subscriber = "0.3"
 tower = { version = "0.5", features = ["util"] }
 ```
 
-Replace `crates/apiserver/src/lib.rs` (keep the Step 1 test module at the end):
+Replace `crates/server/src/lib.rs` (keep the Step 1 test module at the end):
 ```rust
 //! Velos API server: a Kubernetes-shaped REST surface over `velos_store`.
 //!
@@ -1292,7 +1292,7 @@ mod tests {
 }
 ```
 
-Create `crates/apiserver/src/main.rs`:
+Create `crates/server/src/main.rs`:
 ```rust
 use std::sync::Arc;
 
@@ -1303,11 +1303,11 @@ async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
 
     let store = Arc::new(SqliteStore::open("velos.db")?);
-    let app = velos_apiserver::app(store);
+    let app = velos_server::app(store);
 
     let addr = "127.0.0.1:8080";
     let listener = tokio::net::TcpListener::bind(addr).await?;
-    tracing::info!("velos-apiserver listening on {addr}");
+    tracing::info!("velos-server listening on {addr}");
     axum::serve(listener, app).await?;
     Ok(())
 }
@@ -1317,22 +1317,22 @@ Make sure the test module from Step 1 replaces the placeholder `mod tests` block
 
 - [ ] **Step 4: Run the test to verify it passes**
 
-Run: `cargo test -p velos-apiserver`
+Run: `cargo test -p velos-server`
 Expected: PASS — 3 tests ok.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/apiserver/
-git commit -m "feat(apiserver): create + get handlers, router, binary entrypoint"
+git add crates/server/
+git commit -m "feat(server): create + get handlers, router, binary entrypoint"
 ```
 
 ---
 
-## Task 6: `velos-apiserver` — list collection with selectors
+## Task 6: `velos-server` — list collection with selectors
 
 **Files:**
-- Modify: `crates/apiserver/src/lib.rs`
+- Modify: `crates/server/src/lib.rs`
 
 **Interfaces:**
 - Consumes: `parse_selector`, `kind_for`, `AppState` from Task 5.
@@ -1340,7 +1340,7 @@ git commit -m "feat(apiserver): create + get handlers, router, binary entrypoint
 
 - [ ] **Step 1: Write the failing test**
 
-Add to the `#[cfg(test)] mod tests` block in `crates/apiserver/src/lib.rs`:
+Add to the `#[cfg(test)] mod tests` block in `crates/server/src/lib.rs`:
 ```rust
     async fn post(app: &axum::Router, plural: &str, body: serde_json::Value) {
         let resp = app
@@ -1398,12 +1398,12 @@ Add to the `#[cfg(test)] mod tests` block in `crates/apiserver/src/lib.rs`:
 
 - [ ] **Step 2: Run the test to verify it fails**
 
-Run: `cargo test -p velos-apiserver list_returns_items_and_honors_selectors`
+Run: `cargo test -p velos-server list_returns_items_and_honors_selectors`
 Expected: FAIL — `GET /api/v1/:plural` (collection) is not routed yet (returns 405/404).
 
 - [ ] **Step 3: Implement the list handler and route it**
 
-Add the handler to `crates/apiserver/src/lib.rs`:
+Add the handler to `crates/server/src/lib.rs`:
 ```rust
 async fn list(
     State(state): State<AppState>,
@@ -1431,22 +1431,22 @@ pub fn app(store: Arc<dyn Store>) -> Router {
 
 - [ ] **Step 4: Run the test to verify it passes**
 
-Run: `cargo test -p velos-apiserver`
-Expected: PASS — all apiserver tests ok.
+Run: `cargo test -p velos-server`
+Expected: PASS — all server tests ok.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/apiserver/
-git commit -m "feat(apiserver): list collection with label/field selectors"
+git add crates/server/
+git commit -m "feat(server): list collection with label/field selectors"
 ```
 
 ---
 
-## Task 7: `velos-apiserver` — replace, status subresource, delete
+## Task 7: `velos-server` — replace, status subresource, delete
 
 **Files:**
-- Modify: `crates/apiserver/src/lib.rs`
+- Modify: `crates/server/src/lib.rs`
 
 **Interfaces:**
 - Consumes: handlers/state/helpers from Tasks 5-6.
@@ -1511,12 +1511,12 @@ Add to the `#[cfg(test)] mod tests` block:
 
 - [ ] **Step 2: Run the test to verify it fails**
 
-Run: `cargo test -p velos-apiserver replace_status_and_delete_lifecycle`
+Run: `cargo test -p velos-server replace_status_and_delete_lifecycle`
 Expected: FAIL — PUT/DELETE routes not present.
 
 - [ ] **Step 3: Implement replace, status, delete and route them**
 
-Add handlers to `crates/apiserver/src/lib.rs`:
+Add handlers to `crates/server/src/lib.rs`:
 ```rust
 async fn replace(
     State(state): State<AppState>,
@@ -1618,7 +1618,7 @@ pub fn app(store: Arc<dyn Store>) -> Router {
 - [ ] **Step 4: Run the full workspace test suite**
 
 Run: `cargo test --workspace`
-Expected: PASS — models, store, and apiserver tests all green.
+Expected: PASS — models, store, and server tests all green.
 
 - [ ] **Step 5: Run the full pre-PR gate and commit**
 
@@ -1626,8 +1626,8 @@ Run: `make check`
 Expected: fmt clean, clippy clean (`-D warnings`), all tests pass.
 
 ```bash
-git add crates/apiserver/
-git commit -m "feat(apiserver): replace, status subresource, and delete"
+git add crates/server/
+git commit -m "feat(server): replace, status subresource, and delete"
 ```
 
 ---

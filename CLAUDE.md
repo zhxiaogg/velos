@@ -95,7 +95,7 @@ binaries. No `unwrap`/`expect`/`panic` in production code (lint-enforced).
 
 - Unit tests live alongside source under `#[cfg(test)] mod tests` in the same `.rs`
   file.
-- Full-stack end-to-end tests (spin up the apiserver + a fake `ContainerRuntime`) go
+- Full-stack end-to-end tests (spin up the server + a fake `ContainerRuntime`) go
   in the `velos-tests` crate.
 
 ## Development Workflow
