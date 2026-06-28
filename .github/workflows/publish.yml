@@ -27,13 +27,13 @@ jobs:
       id-token: write # mint the OIDC token exchanged for a temp crates.io token
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: dtolnay/rust-toolchain@stable
 
       # The web UI is not committed; build it just-in-time so `include` bakes it
       # into the published velos-server crate.
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: "20"
       - name: Build web UI
@@ -100,14 +100,14 @@ jobs:
           - runner: macos-latest # cross-compiled; Intel runners are being retired
             target: x86_64-apple-darwin
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
 
       # Build the (uncommitted) web UI so it is embedded into velos-server.
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: "20"
       - name: Build web UI
