@@ -1,0 +1,57 @@
+version: 2
+updates:
+  # Rust crate dependencies across the workspace.
+  - package-ecosystem: cargo
+    directory: "/"
+    schedule:
+      interval: daily
+      time: "18:00"
+      timezone: "America/Vancouver"
+    open-pull-requests-limit: 10
+    groups:
+      cargo-routine:
+        # Group routine minor/patch updates into a single daily PR.
+        update-types:
+          - minor
+          - patch
+        # Breaking-prone libraries are excluded so they arrive as individual,
+        # reviewable PRs. These are 0.x crates whose "minor" bumps are de-facto
+        # breaking, so update-type filtering alone won't isolate them.
+        exclude-patterns:
+          - "axum"
+          - "reqwest"
+          - "tower"
+          - "rusqlite"
+          - "argon2"
+    # Semver-major updates are not covered by the group above, so they open as
+    # individual PRs automatically.
+
+  # Web dashboard (React + Vite) npm dependencies.
+  - package-ecosystem: npm
+    directory: "/web"
+    schedule:
+      interval: daily
+      time: "18:00"
+      timezone: "America/Vancouver"
+    open-pull-requests-limit: 10
+    groups:
+      npm-routine:
+        # Group routine minor/patch updates into a single daily PR; majors
+        # (e.g. vite/tailwind toolchain bumps) open individually for review.
+        update-types:
+          - minor
+          - patch
+
+  # Keeps the SHA-pinned GitHub Actions current (bumps both the pin and the
+  # trailing # vX.Y.Z version comment).
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: daily
+      time: "18:00"
+      timezone: "America/Vancouver"
+    open-pull-requests-limit: 5
+    groups:
+      all-actions:
+        patterns:
+          - "*"
