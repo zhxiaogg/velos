@@ -70,4 +70,16 @@ mod tests {
         let back: Container = serde_json::from_str(&json).unwrap();
         assert_eq!(c, back);
     }
+
+    #[test]
+    fn watch_event_is_adjacently_tagged() {
+        let ev = WatchEvent::Added(serde_json::json!({ "metadata": { "name": "c1" } }));
+        let json = serde_json::to_string(&ev).unwrap();
+        // adjacently tagged: { "type": "Added", "object": { ... } }
+        assert!(json.contains("\"type\":\"Added\""), "json was: {json}");
+        assert!(json.contains("\"object\""), "json was: {json}");
+
+        let back: WatchEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(ev, back);
+    }
 }

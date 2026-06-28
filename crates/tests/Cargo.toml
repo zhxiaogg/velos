@@ -1,0 +1,22 @@
+[package]
+name = "velos-tests"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+
+[dev-dependencies]
+velos-apiserver = { path = "../apiserver" }
+velos-store = { path = "../store" }
+velos-runtime = { path = "../runtime" }
+velos-auth = { path = "../auth" }
+veloslet = { path = "../veloslet" }
+axum = "0.7"
+tokio = { version = "1", features = ["full"] }
+reqwest = { version = "0.12", default-features = false, features = ["json"] }
+serde_json = "1.0"

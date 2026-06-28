@@ -101,3 +101,29 @@ struct Lease {
     metadata: ObjectMeta,
     spec: LeaseSpec,
 }
+
+#[type_tag = "type"]
+#[content_tag = "object"]
+union WatchEvent {
+    Added(Any),
+    Modified(Any),
+    Deleted(Any),
+}
+
+struct RegisterRequest {
+    name: String,
+    capacity: NodeResources,
+    addresses: Vec<String>,
+    container_runtime_version: String,
+}
+
+struct WorkerCredential {
+    worker_name: String,
+    token: String,
+}
+
+struct BootstrapTokenInfo {
+    token_id: String,
+    secret: String,
+    expires_at: DateTimeUtc,
+}

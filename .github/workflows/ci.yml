@@ -32,3 +32,6 @@ jobs:
 
       - name: Test
         run: cargo test --workspace
+        # The real Apple-Containerization e2e (`e2e_apple`) is always enabled but
+        # self-skips here (no `container` CLI / no virtualization). It runs for
+        # real locally on Apple silicon (see crates/tests).

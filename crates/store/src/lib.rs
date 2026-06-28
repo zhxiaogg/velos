@@ -22,6 +22,8 @@ pub enum StoreError {
     Uid(String),
     #[error("store lock poisoned")]
     Lock,
+    #[error("resource version conflict: expected {expected}, found {actual:?}")]
+    Conflict { expected: u64, actual: Option<u64> },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -35,6 +37,41 @@ pub struct StoredObject {
     pub document: Value,
 }
 
+/// The kind of mutation an event records. Mirrors `velos::WatchEvent`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EventType {
+    Added,
+    Modified,
+    Deleted,
+}
+
+impl EventType {
+    fn as_str(self) -> &'static str {
+        match self {
+            EventType::Added => "Added",
+            EventType::Modified => "Modified",
+            EventType::Deleted => "Deleted",
+        }
+    }
+
+    fn parse(s: &str) -> Result<Self, StoreError> {
+        match s {
+            "Added" => Ok(EventType::Added),
+            "Modified" => Ok(EventType::Modified),
+            "Deleted" => Ok(EventType::Deleted),
+            other => Err(StoreError::Uid(format!("unknown event type: {other}"))),
+        }
+    }
+}
+
+/// An entry in the append-only event log that powers `watch`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct StoredEvent {
+    pub resource_version: u64,
+    pub event_type: EventType,
+    pub document: Value,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct Selector {
     /// Equality label matches (all must hold).
@@ -44,11 +81,20 @@ pub struct Selector {
 }
 
 pub trait Store: Send + Sync {
+    /// Allocate the next monotonic global resource version.
     fn next_resource_version(&self) -> Result<u64, StoreError>;
+    /// The current (most recently allocated) resource version, without bumping it.
+    fn latest_resource_version(&self) -> Result<u64, StoreError>;
+    /// Upsert an object, recording an `Added`/`Modified` event (chosen by prior existence).
     fn put(&self, obj: &StoredObject) -> Result<(), StoreError>;
+    /// Upsert only if the currently stored object has `expected_version`; else `Conflict`.
+    fn put_cas(&self, obj: &StoredObject, expected_version: u64) -> Result<(), StoreError>;
     fn get(&self, kind: &str, name: &str) -> Result<Option<StoredObject>, StoreError>;
     fn list(&self, kind: &str, selector: &Selector) -> Result<Vec<StoredObject>, StoreError>;
-    fn delete(&self, kind: &str, name: &str) -> Result<bool, StoreError>;
+    /// Hard-delete an object, recording a `Deleted` event. Returns the removed object.
+    fn delete(&self, kind: &str, name: &str) -> Result<Option<StoredObject>, StoreError>;
+    /// Replay events for `kind` with `resource_version` strictly greater than `since`.
+    fn list_since(&self, kind: &str, since: u64) -> Result<Vec<StoredEvent>, StoreError>;
 }
 
 pub struct SqliteStore {
@@ -88,28 +134,51 @@ impl SqliteStore {
                 id    INTEGER PRIMARY KEY CHECK (id = 0),
                 value INTEGER NOT NULL
             );
-            INSERT OR IGNORE INTO rv_seq (id, value) VALUES (0, 0);",
+            INSERT OR IGNORE INTO rv_seq (id, value) VALUES (0, 0);
+            CREATE TABLE IF NOT EXISTS events (
+                seq              INTEGER PRIMARY KEY AUTOINCREMENT,
+                resource_version INTEGER NOT NULL,
+                kind             TEXT NOT NULL,
+                name             TEXT NOT NULL,
+                event_type       TEXT NOT NULL,
+                document         TEXT NOT NULL
+            );",
         )?;
         Ok(())
     }
 
-    fn parse_uid(s: &str) -> Result<Uuid, StoreError> {
-        Uuid::parse_str(s).map_err(|_| StoreError::Uid(s.to_string()))
-    }
-}
-
-impl Store for SqliteStore {
-    fn next_resource_version(&self) -> Result<u64, StoreError> {
-        let conn = self.conn.lock().map_err(|_| StoreError::Lock)?;
+    /// Bump and return the resource-version sequence using the given connection.
+    fn bump_rv(conn: &Connection) -> Result<u64, StoreError> {
         conn.execute("UPDATE rv_seq SET value = value + 1 WHERE id = 0", [])?;
         let v: i64 = conn.query_row("SELECT value FROM rv_seq WHERE id = 0", [], |r| r.get(0))?;
         Ok(v as u64)
     }
 
-    fn put(&self, obj: &StoredObject) -> Result<(), StoreError> {
-        let conn = self.conn.lock().map_err(|_| StoreError::Lock)?;
-        let labels = serde_json::to_string(&obj.labels)?;
-        let document = serde_json::to_string(&obj.document)?;
+    /// Append one entry to the event log.
+    fn record_event(
+        conn: &Connection,
+        rv: u64,
+        kind: &str,
+        name: &str,
+        event_type: EventType,
+        document: &Value,
+    ) -> Result<(), StoreError> {
+        conn.execute(
+            "INSERT INTO events (resource_version, kind, name, event_type, document)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            rusqlite::params![
+                rv as i64,
+                kind,
+                name,
+                event_type.as_str(),
+                serde_json::to_string(document)?,
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Insert/replace the object row (no event recorded).
+    fn write_row(conn: &Connection, obj: &StoredObject) -> Result<(), StoreError> {
         conn.execute(
             "INSERT INTO objects (kind, name, uid, resource_version, node_name, labels, document)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
@@ -125,15 +194,19 @@ impl Store for SqliteStore {
                 obj.uid.to_string(),
                 obj.resource_version as i64,
                 obj.node_name,
-                labels,
-                document,
+                serde_json::to_string(&obj.labels)?,
+                serde_json::to_string(&obj.document)?,
             ],
         )?;
         Ok(())
     }
 
-    fn get(&self, kind: &str, name: &str) -> Result<Option<StoredObject>, StoreError> {
-        let conn = self.conn.lock().map_err(|_| StoreError::Lock)?;
+    /// Read one object using the given connection (no locking).
+    fn get_with(
+        conn: &Connection,
+        kind: &str,
+        name: &str,
+    ) -> Result<Option<StoredObject>, StoreError> {
         let mut stmt = conn.prepare(
             "SELECT uid, resource_version, node_name, labels, document
              FROM objects WHERE kind = ?1 AND name = ?2",
@@ -158,6 +231,85 @@ impl Store for SqliteStore {
             }
             None => Ok(None),
         }
+    }
+
+    /// The resource version of the currently stored object, if any.
+    fn current_version(
+        conn: &Connection,
+        kind: &str,
+        name: &str,
+    ) -> Result<Option<u64>, StoreError> {
+        let mut stmt =
+            conn.prepare("SELECT resource_version FROM objects WHERE kind = ?1 AND name = ?2")?;
+        let mut rows = stmt.query(rusqlite::params![kind, name])?;
+        match rows.next()? {
+            Some(row) => {
+                let rv: i64 = row.get(0)?;
+                Ok(Some(rv as u64))
+            }
+            None => Ok(None),
+        }
+    }
+
+    fn parse_uid(s: &str) -> Result<Uuid, StoreError> {
+        Uuid::parse_str(s).map_err(|_| StoreError::Uid(s.to_string()))
+    }
+}
+
+impl Store for SqliteStore {
+    fn next_resource_version(&self) -> Result<u64, StoreError> {
+        let conn = self.conn.lock().map_err(|_| StoreError::Lock)?;
+        Self::bump_rv(&conn)
+    }
+
+    fn latest_resource_version(&self) -> Result<u64, StoreError> {
+        let conn = self.conn.lock().map_err(|_| StoreError::Lock)?;
+        let v: i64 = conn.query_row("SELECT value FROM rv_seq WHERE id = 0", [], |r| r.get(0))?;
+        Ok(v as u64)
+    }
+
+    fn put(&self, obj: &StoredObject) -> Result<(), StoreError> {
+        let conn = self.conn.lock().map_err(|_| StoreError::Lock)?;
+        let event_type = match Self::current_version(&conn, &obj.kind, &obj.name)? {
+            Some(_) => EventType::Modified,
+            None => EventType::Added,
+        };
+        Self::write_row(&conn, obj)?;
+        Self::record_event(
+            &conn,
+            obj.resource_version,
+            &obj.kind,
+            &obj.name,
+            event_type,
+            &obj.document,
+        )?;
+        Ok(())
+    }
+
+    fn put_cas(&self, obj: &StoredObject, expected_version: u64) -> Result<(), StoreError> {
+        let conn = self.conn.lock().map_err(|_| StoreError::Lock)?;
+        let actual = Self::current_version(&conn, &obj.kind, &obj.name)?;
+        if actual != Some(expected_version) {
+            return Err(StoreError::Conflict {
+                expected: expected_version,
+                actual,
+            });
+        }
+        Self::write_row(&conn, obj)?;
+        Self::record_event(
+            &conn,
+            obj.resource_version,
+            &obj.kind,
+            &obj.name,
+            EventType::Modified,
+            &obj.document,
+        )?;
+        Ok(())
+    }
+
+    fn get(&self, kind: &str, name: &str) -> Result<Option<StoredObject>, StoreError> {
+        let conn = self.conn.lock().map_err(|_| StoreError::Lock)?;
+        Self::get_with(&conn, kind, name)
     }
 
     fn list(&self, kind: &str, selector: &Selector) -> Result<Vec<StoredObject>, StoreError> {
@@ -206,13 +358,44 @@ impl Store for SqliteStore {
         Ok(out)
     }
 
-    fn delete(&self, kind: &str, name: &str) -> Result<bool, StoreError> {
+    fn delete(&self, kind: &str, name: &str) -> Result<Option<StoredObject>, StoreError> {
         let conn = self.conn.lock().map_err(|_| StoreError::Lock)?;
-        let n = conn.execute(
+        let existing = Self::get_with(&conn, kind, name)?;
+        let Some(obj) = existing else {
+            return Ok(None);
+        };
+        conn.execute(
             "DELETE FROM objects WHERE kind = ?1 AND name = ?2",
             rusqlite::params![kind, name],
         )?;
-        Ok(n > 0)
+        let rv = Self::bump_rv(&conn)?;
+        Self::record_event(&conn, rv, kind, name, EventType::Deleted, &obj.document)?;
+        Ok(Some(obj))
+    }
+
+    fn list_since(&self, kind: &str, since: u64) -> Result<Vec<StoredEvent>, StoreError> {
+        let conn = self.conn.lock().map_err(|_| StoreError::Lock)?;
+        let mut stmt = conn.prepare(
+            "SELECT resource_version, event_type, document
+             FROM events WHERE kind = ?1 AND resource_version > ?2 ORDER BY seq",
+        )?;
+        let raw = stmt.query_map(rusqlite::params![kind, since as i64], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+            ))
+        })?;
+        let mut out = Vec::new();
+        for r in raw {
+            let (rv, event_type, document_s) = r?;
+            out.push(StoredEvent {
+                resource_version: rv as u64,
+                event_type: EventType::parse(&event_type)?,
+                document: serde_json::from_str(&document_s)?,
+            });
+        }
+        Ok(out)
     }
 }
 
@@ -339,8 +522,78 @@ mod tests {
     fn delete_removes_and_reports() {
         let s = SqliteStore::in_memory().unwrap();
         s.put(&obj_with("Container", "c1", None, &[])).unwrap();
-        assert!(s.delete("Container", "c1").unwrap());
-        assert!(!s.delete("Container", "c1").unwrap());
+        assert!(s.delete("Container", "c1").unwrap().is_some());
+        assert!(s.delete("Container", "c1").unwrap().is_none());
         assert!(s.get("Container", "c1").unwrap().is_none());
+    }
+
+    #[test]
+    fn put_records_added_then_modified_events() {
+        let s = SqliteStore::in_memory().unwrap();
+        let mut o = obj("Container", "c1", 1);
+        s.put(&o).unwrap();
+        o.resource_version = 2;
+        o.document = serde_json::json!({ "metadata": { "name": "c1" }, "v": 2 });
+        s.put(&o).unwrap();
+
+        let events = s.list_since("Container", 0).unwrap();
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0].event_type, EventType::Added);
+        assert_eq!(events[1].event_type, EventType::Modified);
+        assert_eq!(events[1].resource_version, 2);
+        assert_eq!(events[1].document["v"], 2);
+    }
+
+    #[test]
+    fn list_since_filters_by_version_and_kind() {
+        let s = SqliteStore::in_memory().unwrap();
+        s.put(&obj("Container", "c1", 1)).unwrap();
+        s.put(&obj("Worker", "w1", 2)).unwrap();
+        s.put(&obj("Container", "c2", 3)).unwrap();
+
+        let evs = s.list_since("Container", 1).unwrap(); // strictly after rv 1
+        assert_eq!(evs.len(), 1);
+        assert_eq!(evs[0].resource_version, 3);
+    }
+
+    #[test]
+    fn delete_records_deleted_event_and_returns_object() {
+        let s = SqliteStore::in_memory().unwrap();
+        s.put(&obj("Container", "c1", 5)).unwrap();
+        let removed = s.delete("Container", "c1").unwrap();
+        assert_eq!(removed.unwrap().name, "c1");
+        assert!(s.delete("Container", "c1").unwrap().is_none());
+
+        let evs = s.list_since("Container", 0).unwrap();
+        assert_eq!(evs.last().unwrap().event_type, EventType::Deleted);
+    }
+
+    #[test]
+    fn put_cas_conflicts_on_version_mismatch() {
+        let s = SqliteStore::in_memory().unwrap();
+        s.put(&obj("Container", "c1", 1)).unwrap();
+
+        let mut o = obj("Container", "c1", 2);
+        s.put_cas(&o, 1).unwrap(); // current is 1, matches
+
+        o.resource_version = 3;
+        let err = s.put_cas(&o, 1).unwrap_err(); // current is now 2, not 1
+        assert!(matches!(err, StoreError::Conflict { .. }));
+    }
+
+    #[test]
+    fn put_cas_requires_existing_object() {
+        let s = SqliteStore::in_memory().unwrap();
+        let err = s.put_cas(&obj("Container", "missing", 1), 1).unwrap_err();
+        assert!(matches!(err, StoreError::Conflict { .. }));
+    }
+
+    #[test]
+    fn latest_resource_version_reflects_sequence() {
+        let s = SqliteStore::in_memory().unwrap();
+        assert_eq!(s.latest_resource_version().unwrap(), 0);
+        s.next_resource_version().unwrap();
+        s.next_resource_version().unwrap();
+        assert_eq!(s.latest_resource_version().unwrap(), 2);
     }
 }
