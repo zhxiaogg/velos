@@ -35,13 +35,19 @@ FROM debian:bookworm-slim AS runtime
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates \
     && rm -rf /var/lib/apt/lists/* \
-    && useradd --system --create-home --home-dir /home/velos --shell /usr/sbin/nologin velos
+    && useradd --system --create-home --home-dir /home/velos --shell /usr/sbin/nologin velos \
+    && install -d -o velos -g velos /data
 COPY --from=build /app/target/release/velos-server /usr/local/bin/velos-server
 USER velos
-WORKDIR /home/velos
+WORKDIR /data
 EXPOSE 8080
 # The binary defaults to 127.0.0.1:8080, which is unreachable outside the
-# container; bind all interfaces by default. VELOS_DB defaults to ./velos.db
-# (mount a volume at /home/velos for persistence).
+# container; bind all interfaces by default.
 ENV VELOS_LISTEN=0.0.0.0:8080
+# Persist the SQLite datastore in /data. The directory is owned by the non-root
+# velos user so a fresh anonymous volume (or a host bind-mount made writable by
+# uid/gid of velos) is writable out of the box. Mount a volume here to keep data
+# across container restarts, e.g. `-v velos-data:/data`.
+ENV VELOS_DB=/data/velos.db
+VOLUME ["/data"]
 ENTRYPOINT ["velos-server"]
