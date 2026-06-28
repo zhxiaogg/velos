@@ -3,6 +3,8 @@ name = "velos-store"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
+description = "Schema-agnostic SQLite persistence for Velos objects, behind a Store trait."
 
 [lints]
 workspace = true

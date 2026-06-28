@@ -3,12 +3,14 @@ name = "velos-auth"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
+description = "Bootstrap-token registration and credential authentication for Velos."
 
 [lints]
 workspace = true
 
 [dependencies]
-velos-store = { path = "../store" }
+velos-store = { workspace = true }
 chrono = { version = "0.4", features = ["serde"] }
 sha2 = "0.10"
 hex = "0.4"

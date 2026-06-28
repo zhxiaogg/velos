@@ -3,6 +3,8 @@ name = "veloslet"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
+description = "The Velos worker daemon: registers a node and reconciles its containers."
 
 [lints]
 workspace = true
@@ -16,7 +18,7 @@ name = "veloslet"
 path = "src/main.rs"
 
 [dependencies]
-velos-runtime = { path = "../runtime" }
+velos-runtime = { workspace = true }
 reqwest = { version = "0.12", default-features = false, features = ["json"] }
 tokio = { version = "1", features = ["full"] }
 serde = { version = "1.0", features = ["derive"] }
@@ -29,5 +31,5 @@ tracing = "0.1"
 tracing-subscriber = "0.3"
 
 [dev-dependencies]
-velos-apiserver = { path = "../apiserver" }
-velos-store = { path = "../store" }
+velos-apiserver = { workspace = true }
+velos-store = { workspace = true }

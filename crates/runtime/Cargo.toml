@@ -3,6 +3,8 @@ name = "velos-runtime"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
+description = "The Velos container-runtime seam and its backends."
 
 [lints]
 workspace = true
