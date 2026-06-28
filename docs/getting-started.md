@@ -89,7 +89,7 @@ Control log verbosity with `RUST_LOG`, e.g. `RUST_LOG=info velos-server`.
 
 A freshly started server is **uninitialized** and fails closed: every route
 except the first-run setup is rejected until you create the admin account
-(§4). Leave the apiserver running and open a new terminal for the next steps.
+(§4). Leave the server running and open a new terminal for the next steps.
 
 ## 4. First-run setup & connecting velosctl
 
@@ -199,7 +199,7 @@ per-command: `velosctl --server http://other:8080 --token <tok> get workers`.
 
 ## 7. Use the dashboard
 
-The dashboard is served by the apiserver — just open **`http://127.0.0.1:8080`**.
+The dashboard is served by the server — just open **`http://127.0.0.1:8080`**.
 After signing in (§4) it gives you:
 
 - **Overview** — workers ready, container counts, cluster CPU/memory allocation,
@@ -212,7 +212,7 @@ After signing in (§4) it gives you:
 
 Data refreshes every 2 seconds. **Sign out** from the header clears the browser
 session. To iterate on the UI itself, run the Vite dev server (it proxies the API
-to the apiserver for hot-reload):
+to the server for hot-reload):
 
 ```bash
 cd web && npm install && npm run dev      # http://localhost:5173
@@ -286,8 +286,8 @@ Auth endpoints at a glance:
 | `velosctl token create` → `403`/`401` | Bootstrap minting is **admin-only**; log in first (§4). |
 | Container stuck in `Pending` | Created without `status.phase: "Pending"`, or no worker is `Ready` / has capacity. |
 | Container goes straight to `Failed` | The runtime couldn't run it (image pull failed, or the `container` CLI is missing on the worker). Check the `veloslet` logs. |
-| Worker shows `NotReady` | `veloslet` isn't renewing its lease — confirm it's running and can reach the apiserver. |
-| Dashboard says "apiserver unreachable" | The apiserver isn't running, or you opened the dev server while the apiserver is down. |
+| Worker shows `NotReady` | `veloslet` isn't renewing its lease — confirm it's running and can reach the server. |
+| Dashboard says "server unreachable" | The server isn't running, or you opened the dev server while the server is down. |
 | `address already in use` on start | Something already holds `:8080` — `lsof -nP -iTCP:8080 -sTCP:LISTEN`. |
 
 ## 11. Tearing down

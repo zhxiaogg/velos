@@ -1,4 +1,4 @@
-// Wire types as served by the Velos apiserver (camelCase JSON).
+// Wire types as served by the Velos server (camelCase JSON).
 // These mirror the fluorite-generated protocol types — the dashboard only reads
 // the fields it renders, treating the document as otherwise opaque.
 

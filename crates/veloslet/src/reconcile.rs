@@ -1,7 +1,7 @@
 //! Pure worker reconciliation (Principle #5).
 //!
 //! `reconcile(desired, observed) -> Vec<Action>` is a total function: it compares
-//! the containers the apiserver assigned to this worker against what the runtime
+//! the containers the server assigned to this worker against what the runtime
 //! actually reports, and returns the actions that converge the two. All matching
 //! is keyed by container **uid**, which makes the result idempotent across crashes.
 
@@ -34,7 +34,7 @@ impl RestartPolicy {
     }
 }
 
-/// A container the apiserver has assigned to this worker.
+/// A container the server has assigned to this worker.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DesiredContainer {
     pub name: String,
@@ -66,7 +66,7 @@ pub struct ObservedInstance {
     pub state: InstanceState,
 }
 
-/// An intended action; the actuator turns these into runtime + apiserver calls.
+/// An intended action; the actuator turns these into runtime + server calls.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Action {
     /// Launch the instance, then report `Running`.

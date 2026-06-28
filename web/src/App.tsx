@@ -93,7 +93,7 @@ export default function App() {
         <div className="mt-auto rounded-lg border border-white/5 bg-white/[0.02] p-3 text-xs">
           <div className="flex items-center gap-2 text-zinc-400">
             <span className={`h-2 w-2 rounded-full ${isError ? "bg-rose-500" : "bg-emerald-400 live-dot"}`} />
-            {isError ? "apiserver unreachable" : `${ready} worker${ready === 1 ? "" : "s"} ready`}
+            {isError ? "server unreachable" : `${ready} worker${ready === 1 ? "" : "s"} ready`}
           </div>
           <div className="mt-1 text-zinc-600">{window.location.host}</div>
         </div>

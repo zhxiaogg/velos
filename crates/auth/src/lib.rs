@@ -106,7 +106,7 @@ pub struct BootstrapToken {
     pub expires_at: DateTime<Utc>,
 }
 
-/// Auth operations the apiserver depends on. A trait so the implementation
+/// Auth operations the server depends on. A trait so the implementation
 /// (SQLite-backed today) is swappable behind a deep-module seam.
 pub trait AuthService: Send + Sync {
     /// Mint a bootstrap token valid for `ttl_secs`; persists only its hash.
@@ -120,7 +120,7 @@ pub trait AuthService: Send + Sync {
     /// Revoke a worker's credential (tombstone); its next call fails closed.
     fn revoke_credential(&self, worker: &str) -> Result<(), AuthError>;
 
-    /// Whether the admin account has been set up. Until it is, the apiserver
+    /// Whether the admin account has been set up. Until it is, the server
     /// reaches only `status`/`setup` (the initialization gate).
     fn is_initialized(&self) -> Result<bool, AuthError>;
     /// Create the single admin account; fails closed if already initialized.
@@ -155,7 +155,7 @@ pub struct AdminTokenInfo {
 }
 
 /// Resolves a presented bearer credential to an [`Identity`], or `None` (fail
-/// closed). The apiserver depends on this so an external OIDC verifier can be
+/// closed). The server depends on this so an external OIDC verifier can be
 /// substituted later without touching any endpoint (deep-module seam).
 pub trait TokenVerifier: Send + Sync {
     fn verify(&self, presented: &str) -> Option<Identity>;

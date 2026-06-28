@@ -1,10 +1,10 @@
-# velosctl ↔ apiserver Admin Authentication — Implementation Plan
+# velosctl ↔ server Admin Authentication — Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Introduce an admin identity and authenticate the `velosctl ↔ apiserver` path using the GitHub PAT model — first-run admin setup in the web UI, password login, named CLI tokens carried by `velosctl`.
+**Goal:** Introduce an admin identity and authenticate the `velosctl ↔ server` path using the GitHub PAT model — first-run admin setup in the web UI, password login, named CLI tokens carried by `velosctl`.
 
-**Architecture:** Extend `velos-auth` with argon2 password handling, a single admin account, and one opaque-token primitive (UI session + CLI token, same mechanism, hashed in the `Store`). The apiserver gains an `Identity::Admin`, setup/login/token endpoints, an initialization gate (only `status`+`setup` reachable while uninitialized), and resolves identity through a `TokenVerifier` seam (OIDC-ready). `velosctl` persists `{server, token}` and resolves both with `flag > env > config` precedence. The web UI replaces its bootstrap-worker hack with setup/login/session-token flows.
+**Architecture:** Extend `velos-auth` with argon2 password handling, a single admin account, and one opaque-token primitive (UI session + CLI token, same mechanism, hashed in the `Store`). The server gains an `Identity::Admin`, setup/login/token endpoints, an initialization gate (only `status`+`setup` reachable while uninitialized), and resolves identity through a `TokenVerifier` seam (OIDC-ready). `velosctl` persists `{server, token}` and resolves both with `flag > env > config` precedence. The web UI replaces its bootstrap-worker hack with setup/login/session-token flows.
 
 **Tech Stack:** Rust 2024 (axum 0.7, thiserror, anyhow, chrono, uuid, sha2, argon2), SQLite-backed `Store`, React + TS + Tailwind + @tanstack/react-query.
 
@@ -12,7 +12,7 @@
 
 - Clippy lints are **deny** in production code: `unwrap_used`, `expect_used`, `panic`, `wildcard_enum_match_arm`. Test modules opt out with `#![cfg_attr(test, allow(...))]` at file top (follow the existing `#[allow(clippy::unwrap_used)]` on test modules).
 - No wildcard `match` arms on enums — exhaustive matches only.
-- Errors: `thiserror` typed errors in library crates (`velos-auth`), `anyhow` in binaries (`velosctl`, apiserver `main.rs`).
+- Errors: `thiserror` typed errors in library crates (`velos-auth`), `anyhow` in binaries (`velosctl`, server `main.rs`).
 - Secrets never `Display`/`Debug`/log their contents — use/extend the `Secret` newtype.
 - Protocol ≠ storage: persist opaque docs + index columns via `StoredObject`; do not expose secret-bearing kinds through the REST router.
 - Edition 2024; formatting per `rustfmt.toml`. Pre-PR gate is `make check` (`cargo fmt --all --check`, `cargo clippy --all-targets --all-features -- -D warnings`, `cargo test --workspace`).
@@ -33,7 +33,7 @@ From `velos-store` (`crates/store/src/lib.rs`):
 - `pub struct StoredObject { kind, name, uid, resource_version, node_name: Option<String>, labels: HashMap<String,String>, document: serde_json::Value }`.
 - `SqliteStore::in_memory() -> Result<Self, StoreError>`.
 
-From apiserver (`crates/apiserver/src/lib.rs`):
+From server (`crates/server/src/lib.rs`):
 - `struct AppState { store: Arc<dyn Store>, auth: Option<Arc<dyn AuthService>> }`.
 - `enum ApiError { NotFound, BadRequest(String), Unauthorized, Forbidden, Conflict(String), Internal(String) }` (impl `IntoResponse`).
 - `fn bearer(&HeaderMap) -> Option<String>`.
@@ -446,7 +446,7 @@ Expected: FAIL — `TokenVerifier` not found.
 
 ```rust
 /// Resolves a presented bearer credential to an [`Identity`], or `None` (fail
-/// closed). The apiserver depends on this so an external OIDC verifier can be
+/// closed). The server depends on this so an external OIDC verifier can be
 /// substituted later without touching any endpoint.
 pub trait TokenVerifier: Send + Sync {
     fn verify(&self, presented: &str) -> Option<Identity>;
@@ -473,10 +473,10 @@ git commit -m "feat(auth): TokenVerifier seam over identity resolution (OIDC-rea
 
 ---
 
-## Task 4: apiserver — `Identity::Admin`, initialization gate, admin-gated bootstrap mint
+## Task 4: server — `Identity::Admin`, initialization gate, admin-gated bootstrap mint
 
 **Files:**
-- Modify: `crates/apiserver/src/lib.rs`
+- Modify: `crates/server/src/lib.rs`
 
 **Interfaces:**
 - Consumes: `Identity` (now `Admin`+`Worker`), `AuthService`, `is_initialized` (via a new `AppState` field or a downcast — see Step 3).
@@ -502,9 +502,9 @@ And in `impl AuthService for StoreAuthenticator`, add forwarding methods that de
 
 > After this step the methods are reachable through `Arc<dyn AuthService>`. Re-run `cargo test -p velos-auth` — still PASS.
 
-- [ ] **Step 2: Write the failing apiserver tests**
+- [ ] **Step 2: Write the failing server tests**
 
-Append to the apiserver `mod tests` (which already has `app`, `app_with_auth`, `body_json`, `tower::ServiceExt`). Add a helper to build an auth app and drive requests:
+Append to the server `mod tests` (which already has `app`, `app_with_auth`, `body_json`, `tower::ServiceExt`). Add a helper to build an auth app and drive requests:
 
 ```rust
 #[tokio::test]
@@ -616,22 +616,22 @@ fn require_admin(auth: &Arc<dyn AuthService>, headers: &HeaderMap) -> Result<(),
 
 The test references `/auth/v1/status`, added in Task 5. To keep Task 4 independently green, temporarily run only the mint/gate assertions by splitting: run the existing suite to confirm no regression, and defer the full new test's `status` assertion until Task 5.
 
-Run: `cargo test -p velos-apiserver auth_flow_mint_register_then_scoped_access`
-Expected: This existing test mints a token with no admin — it will now FAIL (mint requires admin). **Update that test in Task 5** when the setup/login flow exists. For now, confirm compilation: `cargo build -p velos-apiserver`.
+Run: `cargo test -p velos-server auth_flow_mint_register_then_scoped_access`
+Expected: This existing test mints a token with no admin — it will now FAIL (mint requires admin). **Update that test in Task 5** when the setup/login flow exists. For now, confirm compilation: `cargo build -p velos-server`.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add crates/auth/src/lib.rs crates/apiserver/src/lib.rs
-git commit -m "feat(apiserver): admin identity, init gate, admin-gated bootstrap mint"
+git add crates/auth/src/lib.rs crates/server/src/lib.rs
+git commit -m "feat(server): admin identity, init gate, admin-gated bootstrap mint"
 ```
 
 ---
 
-## Task 5: apiserver — `status`, `setup`, `login`, `me` endpoints
+## Task 5: server — `status`, `setup`, `login`, `me` endpoints
 
 **Files:**
-- Modify: `crates/apiserver/src/lib.rs`
+- Modify: `crates/server/src/lib.rs`
 
 **Interfaces:**
 - Consumes: `AppState`, `ApiError`, `bearer`, `require_admin`, `Secret`, `Identity`.
@@ -705,7 +705,7 @@ async fn admin_setup_login_token_flow() {
 
 - [ ] **Step 2: Run to verify it fails**
 
-Run: `cargo test -p velos-apiserver admin_setup_login_token_flow`
+Run: `cargo test -p velos-server admin_setup_login_token_flow`
 Expected: FAIL — routes 404.
 
 - [ ] **Step 3: Implement the handlers**
@@ -799,22 +799,22 @@ In `auth_flow_mint_register_then_scoped_access`, before minting the bootstrap to
 
 - [ ] **Step 6: Run the tests**
 
-Run: `cargo test -p velos-apiserver`
+Run: `cargo test -p velos-server`
 Expected: PASS (new flow + repaired legacy + Task 4 gate test).
 
 - [ ] **Step 7: Commit**
 
 ```bash
-git add crates/apiserver/src/lib.rs
-git commit -m "feat(apiserver): status/setup/login/me endpoints with single-shot setup"
+git add crates/server/src/lib.rs
+git commit -m "feat(server): status/setup/login/me endpoints with single-shot setup"
 ```
 
 ---
 
-## Task 6: apiserver — admin CLI-token endpoints
+## Task 6: server — admin CLI-token endpoints
 
 **Files:**
-- Modify: `crates/apiserver/src/lib.rs`
+- Modify: `crates/server/src/lib.rs`
 
 **Interfaces:**
 - Consumes: `require_admin`, `AppState`, `MintedToken`, `AdminTokenInfo`.
@@ -881,7 +881,7 @@ async fn admin_can_create_list_and_revoke_cli_tokens() {
 
 - [ ] **Step 2: Run to verify it fails**
 
-Run: `cargo test -p velos-apiserver admin_can_create_list_and_revoke_cli_tokens`
+Run: `cargo test -p velos-server admin_can_create_list_and_revoke_cli_tokens`
 Expected: FAIL — routes 404.
 
 - [ ] **Step 3: Implement handlers**
@@ -938,14 +938,14 @@ async fn revoke_token(
 
 - [ ] **Step 5: Run the tests**
 
-Run: `cargo test -p velos-apiserver`
+Run: `cargo test -p velos-server`
 Expected: PASS.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add crates/apiserver/src/lib.rs
-git commit -m "feat(apiserver): admin CLI-token create/list/revoke endpoints"
+git add crates/server/src/lib.rs
+git commit -m "feat(server): admin CLI-token create/list/revoke endpoints"
 ```
 
 ---
@@ -1015,7 +1015,7 @@ pub struct Config {
     pub token: Option<String>,
 }
 
-/// Resolve the apiserver URL: flag > env > config > built-in default.
+/// Resolve the server URL: flag > env > config > built-in default.
 pub fn resolve_server(flag: Option<&str>, env: Option<&str>, cfg: &Config) -> String {
     flag.map(str::to_string)
         .or_else(|| env.map(str::to_string))
@@ -1154,7 +1154,7 @@ Add to `enum Command`:
 Change the global `--server` arg so its default is removed (resolution now owns the default):
 
 ```rust
-    /// apiserver base URL (overrides VELOS_SERVER and the saved config).
+    /// server base URL (overrides VELOS_SERVER and the saved config).
     #[arg(long, global = true)]
     server: Option<String>,
 ```
@@ -1546,7 +1546,7 @@ git commit -m "feat(web): admin CLI-token management page"
 - Modify: `crates/tests/tests/e2e.rs` (add an admin-auth flow test)
 
 **Interfaces:**
-- Consumes: `velos_apiserver::app_with_auth`, `velos_auth::StoreAuthenticator`, `velos_store::SqliteStore`, the existing e2e harness (inspect the file for how it boots a server / issues requests).
+- Consumes: `velos_server::app_with_auth`, `velos_auth::StoreAuthenticator`, `velos_store::SqliteStore`, the existing e2e harness (inspect the file for how it boots a server / issues requests).
 
 - [ ] **Step 1: Inspect the existing harness**
 
@@ -1559,7 +1559,7 @@ Run: `sed -n '1,60p' crates/tests/tests/e2e.rs` and reuse its server-boot helper
 async fn admin_auth_end_to_end() {
     let store = std::sync::Arc::new(velos_store::SqliteStore::in_memory().unwrap());
     let auth = std::sync::Arc::new(velos_auth::StoreAuthenticator::new(std::sync::Arc::clone(&store)));
-    let app = velos_apiserver::app_with_auth(store, auth);
+    let app = velos_server::app_with_auth(store, auth);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let base = format!("http://{}", listener.local_addr().unwrap());
     tokio::spawn(async move { axum::serve(listener, app).await.unwrap(); });
@@ -1638,6 +1638,6 @@ git commit -m "docs: document velosctl login and first-run admin setup"
 
 ## Self-Review (completed)
 
-- **Spec coverage:** two-tier identity (Tasks 2,4) ✔; first-run UI setup (Tasks 5,10) ✔; PAT/CLI tokens (Tasks 2,6,11) ✔; one opaque-token primitive (Task 2) ✔; argon2 (Task 1) ✔; UI session token in browser storage (Task 9) ✔; token resolution flag>env>config + server persistence (Tasks 7,8) ✔; init gate (Tasks 4,5) ✔; admin-gated bootstrap mint / closed hole (Task 4) ✔; TokenVerifier OIDC seam (Task 3) ✔; testing across unit/apiserver/ctl/e2e (Tasks 1–8,12) ✔; logout clears server+token (Task 8) ✔.
+- **Spec coverage:** two-tier identity (Tasks 2,4) ✔; first-run UI setup (Tasks 5,10) ✔; PAT/CLI tokens (Tasks 2,6,11) ✔; one opaque-token primitive (Task 2) ✔; argon2 (Task 1) ✔; UI session token in browser storage (Task 9) ✔; token resolution flag>env>config + server persistence (Tasks 7,8) ✔; init gate (Tasks 4,5) ✔; admin-gated bootstrap mint / closed hole (Task 4) ✔; TokenVerifier OIDC seam (Task 3) ✔; testing across unit/server/ctl/e2e (Tasks 1–8,12) ✔; logout clears server+token (Task 8) ✔.
 - **Placeholder scan:** all code steps contain real code; UI nav wiring (Tasks 10–11 Step "App") references the existing pattern rather than inventing one, since `App.tsx`'s exact view-switching must be read at edit time — implementer instruction is explicit.
 - **Type consistency:** `MintedToken{id,token}`, `AdminTokenInfo{id,label,kind,created_at,expires_at}`, `Config{server,token}`, `resolve_server/resolve_token`, `require_admin`, `Identity::{Admin,Worker}` used consistently across Rust tasks; web `sessionToken`/`logout`/`setup`/`login`/`getStatus` consistent across `auth.ts`, `api.ts`, `AuthGate.tsx`, `Tokens.tsx`.

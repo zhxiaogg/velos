@@ -1,6 +1,6 @@
 //! `veloslet` — the Velos worker daemon (the kubelet analog).
 //!
-//! It registers with the apiserver, watches the containers assigned to it,
+//! It registers with the server, watches the containers assigned to it,
 //! reconciles desired vs. observed via the pure [`reconcile`] core, and actuates
 //! through the [`velos_runtime::ContainerRuntime`] seam. It renews a `Lease` as a
 //! liveness heartbeat. The worker is authoritative for container `status`.
@@ -18,7 +18,7 @@ pub use client::{ApiClient, ClientError};
 pub use reconcile::{Action, DesiredContainer, ObservedInstance, RestartPolicy, reconcile};
 
 /// The finalizer this worker owns; its presence means "veloslet must clean up
-/// the micro-VM before the apiserver may remove the object".
+/// the micro-VM before the server may remove the object".
 pub const FINALIZER: &str = "veloslet";
 
 #[derive(Debug, thiserror::Error)]
@@ -30,7 +30,7 @@ pub enum VelosletError {
 }
 
 // ---------------------------------------------------------------------------
-// Observation: turn apiserver container documents into the pure-core inputs.
+// Observation: turn server container documents into the pure-core inputs.
 // ---------------------------------------------------------------------------
 
 fn str_at<'a>(doc: &'a Value, path: &[&str]) -> Option<&'a str> {
@@ -134,7 +134,7 @@ async fn clear_finalizer(client: &ApiClient, name: &str) -> Result<(), VelosletE
     Ok(())
 }
 
-/// Apply one decided action against the runtime and apiserver.
+/// Apply one decided action against the runtime and server.
 pub async fn apply_action(
     client: &ApiClient,
     runtime: &dyn ContainerRuntime,

@@ -1,4 +1,4 @@
-# Velos — Admin Authentication for velosctl ↔ apiserver
+# Velos — Admin Authentication for velosctl ↔ server
 
 **Date:** 2026-06-28
 **Status:** Approved design, pre-implementation
@@ -12,7 +12,7 @@ bootstrap-token mint endpoint (`POST /auth/v1/tokens`) is currently **unauthenti
 in `app_with_auth` — anyone who can reach the server can mint a token, register as a
 worker, and obtain a credential.
 
-This work introduces an **admin identity** and authenticates the `velosctl ↔ apiserver`
+This work introduces an **admin identity** and authenticates the `velosctl ↔ server`
 path using the **GitHub personal-access-token (PAT) model**:
 
 1. **First run (web UI):** an operator sets up the admin account (username + password).
@@ -37,7 +37,7 @@ token.
 | Bootstrap | **First-run setup via the web UI** (set admin username + password); single-shot |
 | CLI auth | **PAT model** — admin creates a named CLI token in the UI; `velosctl` carries it as a bearer |
 | Token primitive | **One opaque-token mechanism** for UI sessions and CLI tokens; persisted only as a hash; looked up in the `Store`; revocation = delete the row |
-| Token format | **Opaque** (not JWT). JWT's only real win — stateless verification — is irrelevant to a single apiserver that already does store-lookup auth, and JWT breaks easy revocation. JWT is reserved for the future OIDC seam |
+| Token format | **Opaque** (not JWT). JWT's only real win — stateless verification — is irrelevant to a single server that already does store-lookup auth, and JWT breaks easy revocation. JWT is reserved for the future OIDC seam |
 | Password hashing | **argon2** (salted) for the human password; `Secret`/SHA-256 retained for high-entropy random tokens |
 | UI session storage | **Short-TTL opaque token in browser storage** (one code path, matches the CLI). HttpOnly cookie is a documented future hardening option |
 | Token resolution (ctl) | **`--token` flag > `VELOS_TOKEN` env > `~/.velos/config`** |
@@ -50,7 +50,7 @@ token.
 OAuth 2.1 deprecated the resource-owner password grant — the only flow where a CLI
 takes a username/password directly. The blessed CLI flows (Device Authorization,
 Authorization Code + PKCE) and the Kubernetes OIDC model all **presuppose an external
-Identity Provider**: the apiserver does not run an IdP, it *validates* JWTs the IdP
+Identity Provider**: the server does not run an IdP, it *validates* JWTs the IdP
 issues. Velos has no external IdP, and standing one up (or building our own OAuth
 authorization server) is a large, security-critical subsystem that does not fit the
 "username/password set up in the UI" flow. The PAT model gives us the operator
@@ -112,7 +112,7 @@ fn revoke_admin_token(&self, id: &str) -> Result<(), AuthError>;
 `authenticate` is extended to return `Identity::Admin` for a valid admin token (session
 or CLI) and continues to return `Identity::Worker` for worker credentials.
 
-## apiserver endpoints
+## server endpoints
 
 | Method & path | Auth | Purpose |
 |---|---|---|
@@ -208,7 +208,7 @@ Unauthenticated API responses (401) → redirect to login or setup based on
   credentials → `Identity::Worker`, garbage → `None`.
 - Token expiry and revocation (post-revoke `authenticate` → `None`).
 
-**apiserver tests** (`crates/apiserver`):
+**server tests** (`crates/server`):
 - Full happy path: `setup` → `login` → create CLI token → authenticated `/api/v1` as
   admin → revoke → subsequent call 401.
 - Initialization gate: before `setup`, `/api/v1/*`, `/auth/v1/login`, `/auth/v1/tokens`,
@@ -223,7 +223,7 @@ Unauthenticated API responses (401) → redirect to login or setup based on
 - Server resolution precedence (flag > env > file > default), pure-function tested.
 
 **e2e** (`velos-tests`):
-- Boot apiserver with admin auth, run a scripted setup → login → mint CLI token →
+- Boot server with admin auth, run a scripted setup → login → mint CLI token →
   velosctl uses it → worker bootstrap+register still works end to end.
 
 ## Scope / non-goals

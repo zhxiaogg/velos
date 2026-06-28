@@ -19,7 +19,7 @@ export function Workers() {
         <EmptyState
           icon={<Server size={32} />}
           title="No workers registered"
-          hint="Start a veloslet pointed at this apiserver with a bootstrap token to register a node."
+          hint="Start a veloslet pointed at this server with a bootstrap token to register a node."
         />
       </Card>
     );

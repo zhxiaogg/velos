@@ -18,8 +18,8 @@ Data auto-refreshes every 2s.
 
 ## How it's served
 
-`npm run build` emits the bundle into `../crates/apiserver/ui`, which the
-**apiserver embeds and serves itself** (via `rust-embed`). In production there is
+`npm run build` emits the bundle into `../crates/server/ui`, which the
+**server embeds and serves itself** (via `rust-embed`). In production there is
 no separate web process — `velos-server` serves the dashboard same-origin
 alongside the API, and unknown paths fall back to `index.html` for client-side
 routing. A `cargo install velos-server` therefore ships a working UI.
@@ -33,7 +33,7 @@ it for a durable credential under the identity `velos-dashboard`
 (`POST /auth/v1/register`), then deletes that identity's `Worker` object so it
 never appears in the workers list (the credential is stored separately and lives
 on). The credential is cached in `localStorage` and re-minted if rejected. This
-runs identically whether the bundle is served by the apiserver or by `npm run
+runs identically whether the bundle is served by the server or by `npm run
 dev`.
 
 > This open bootstrap flow is a placeholder. A future change adds real
@@ -41,14 +41,14 @@ dev`.
 
 ## Develop
 
-The apiserver serves the built bundle, so for production you only need
+The server serves the built bundle, so for production you only need
 `make build` (or `make web`) and then run `velos-server`. For a fast
 edit/reload loop, run the Vite dev server, which proxies the API/auth paths to
-the apiserver (purely to avoid CORS):
+the server (purely to avoid CORS):
 
 ```bash
 npm install
-npm run dev      # http://localhost:5173, proxies to the apiserver on :8080
+npm run dev      # http://localhost:5173, proxies to the server on :8080
 ```
 
-Point the proxy at a different apiserver with `VELOS_SERVER=http://host:port npm run dev`.
+Point the proxy at a different server with `VELOS_SERVER=http://host:port npm run dev`.

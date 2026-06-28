@@ -36,7 +36,7 @@ Design principles (semantic types, illegal-states-unrepresentable, deep modules,
 compile-time enforcement, pure core / impure edge, fail closed, protocol ≠ storage)
 are adopted from `zhxiaogg/hackamore` and persisted in this repo's `CLAUDE.md`.
 
-Naming: the system is **Velos**; the control plane is **`velos-apiserver`** plus
+Naming: the system is **Velos**; the control plane is **`velos-server`** plus
 in-process controllers; the worker daemon is **`veloslet`** (the kubelet analog); the
 CLI is **`velosctl`**.
 
@@ -47,7 +47,7 @@ CLI is **`velosctl`**.
    operator / CLI  ───────▶            CONTROL PLANE (single node)     │
    (velosctl)      REST   │                                            │
                           │  ┌─────────────┐   ┌──────────────────┐    │
-                          │  │  apiserver  │◀──│ SQLite datastore │    │
+                          │  │  server  │◀──│ SQLite datastore │    │
                           │  │ (REST+watch)│   │ (objects + watch │    │
                           │  └──────┬──────┘   │   event log)     │    │
                           │         │          └──────────────────┘    │
@@ -72,7 +72,7 @@ CLI is **`velosctl`**.
 
 ### Components
 
-**Control plane** (one Rust process, `velos-apiserver`):
+**Control plane** (one Rust process, `velos-server`):
 
 - **API server** — REST + a streaming `watch` endpoint; the only component that
   touches the datastore.
@@ -103,7 +103,7 @@ fluorite-generated TypeScript types from `velos-models`.
 ## Schema / codegen layer (fluorite)
 
 `velos-models` compiles `fluorite/*.fl` schemas in `build.rs` with serde + schemars
-derives. `apiserver`, `veloslet`, and `velosctl` all depend on it — one source of
+derives. `server`, `veloslet`, and `velosctl` all depend on it — one source of
 truth for wire types. fluorite is a pure data-type IDL (no REST endpoint description),
 so resource *types* live in `.fl` and routing is hand-written.
 
@@ -179,7 +179,7 @@ actuators apply them. No fire-and-forget.
 Container happy path:
 
 ```
-1. CREATE     client POSTs Container {spec.image, ...} → apiserver admits, persists
+1. CREATE     client POSTs Container {spec.image, ...} → server admits, persists
               phase=Pending, resourceVersion=N, emits WatchEvent::Added
 2. SCHEDULE   scheduler (watching Pending, nodeName=None) runs pure
               schedule(container, workers) -> Some("node-7")
@@ -194,7 +194,7 @@ Container happy path:
               PUT .../status {phase=Succeeded|Failed, exitCode, finishedAt}
 6. DELETE     client DELETE → deletionTimestamp set, finalizer present
               veloslet `container stop/rm`, clears its finalizer
-              → apiserver hard-deletes the row
+              → server hard-deletes the row
 ```
 
 Key properties:
@@ -232,7 +232,7 @@ liveness.
 | Worker reconnects after blip | Lease renews | `NotReady`→`Ready`; veloslet re-lists at last `resourceVersion` and reconciles. No reschedule if recovered before grace. |
 | `container` CLI failure (pull/OOM/runtime) | veloslet observes non-zero/missing instance | veloslet writes `status.phase=Failed` + `message`; restartPolicy decides retry. Fail closed: ambiguous → `Failed`. |
 | Container exits | veloslet `inspect` | `Succeeded`/`Failed` + `exitCode`; restartPolicy applies. |
-| apiserver restart | — | State durable in SQLite incl. event log + last `resourceVersion`; controllers and veloslets reconnect watches and resume. |
+| server restart | — | State durable in SQLite incl. event log + last `resourceVersion`; controllers and veloslets reconnect watches and resume. |
 | Split-brain (two veloslets, same name) | Lease `holderIdentity` mismatch | Registration binds a worker name to one credential; a second holder is rejected. |
 | Orphaned micro-VM | veloslet periodic sweep: `container ls` vs assigned set | veloslet reaps any instance tagged with a uid it isn't assigned. |
 
@@ -255,7 +255,7 @@ Bootstrap-token join (the `kubeadm` pattern), fail-closed throughout:
 2. JOIN     veloslet --server URL --token <id.secret>
             POST /api/v1/workers:register  (Authorization: Bearer <id.secret>)
             body: proposed worker name + node info (arch, macosVersion, capacity)
-3. ISSUE    apiserver verifies token (hash match, unexpired, unrevoked) →
+3. ISSUE    server verifies token (hash match, unexpired, unrevoked) →
             creates Worker + issues a per-worker WorkerCredential (long-lived bearer,
             stored hashed). Returned ONCE.
 4. PERSIST  veloslet writes credential to a local file (0600); uses it as Bearer on
@@ -275,7 +275,7 @@ Bootstrap-token join (the `kubeadm` pattern), fail-closed throughout:
 - **Revocation:** `velosctl worker delete <name>` tombstones the hashed credential;
   the worker's next call fails closed and it must re-join.
 
-Transport: TLS on the apiserver from day one (operator-supplied cert, or self-signed
+Transport: TLS on the server from day one (operator-supplied cert, or self-signed
 dev cert). The `Authenticator` is a trait; mTLS with a CA is the documented upgrade
 path behind that seam (not built in v1).
 
@@ -307,13 +307,13 @@ velos/                          # Rust crate workspace
 │   │   └── fluorite/*.fl
 │   ├── store/            # Store trait + SQLite impl (storage types, NOT fluorite); watch event log
 │   ├── scheduler/        # pure: schedule(unbound, workers) -> Option<WorkerName>
-│   ├── apiserver/        # axum REST + watch + admission + auth; hosts controllers
+│   ├── server/        # axum REST + watch + admission + auth; hosts controllers
 │   │   └── controllers/        #   node-lifecycle, gc, reconcilers
 │   ├── auth/             # Authenticator trait, bootstrap tokens, credentials, Secret newtype
 │   ├── veloslet/               # worker daemon: register, watch, reconcile, container-CLI actuator
 │   │   └── runtime/            #   ContainerRuntime trait + AppleContainer impl (CLI wrapper)
 │   ├── velosctl/               # CLI client over REST
-│   └── tests/            # full-stack e2e (apiserver + fake ContainerRuntime)
+│   └── tests/            # full-stack e2e (server + fake ContainerRuntime)
 └── docs/superpowers/specs/     # this design doc
 ```
 
