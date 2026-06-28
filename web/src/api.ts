@@ -1,30 +1,29 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { forgetCredential, getCredential } from "./auth";
+import { logout, sessionToken } from "./auth";
 import type { Container, Lease, List, RestartPolicy, Worker } from "./types";
 
 // The API is same-origin: the apiserver serves this bundle in production, and
-// the Vite dev server proxies these paths to it. The browser supplies its own
-// Bearer credential (see ./auth).
+// the Vite dev server proxies these paths to it. The browser sends its admin
+// session token (see ./auth) as a Bearer on every call.
 const BASE = "/api/v1";
 
-async function send<T>(path: string, init: RequestInit, retry = true): Promise<T> {
-  const cred = await getCredential();
-  const res = await fetch(`${BASE}${path}`, {
+/// Send to a fully-qualified path with the session bearer; 401 -> logout.
+async function sendAuth<T>(path: string, init: RequestInit): Promise<T> {
+  const tok = sessionToken();
+  const res = await fetch(path, {
     ...init,
     headers: {
       "content-type": "application/json",
-      authorization: `Bearer ${cred}`,
+      ...(tok ? { authorization: `Bearer ${tok}` } : {}),
       ...(init.headers ?? {}),
     },
   });
 
-  // A stale credential (e.g. the server's store was reset) — drop it and retry
-  // once with a freshly minted one.
-  if (res.status === 401 && retry) {
-    forgetCredential();
-    return send<T>(path, init, false);
+  // Session expired/invalid -> drop it; the app shell shows the login screen.
+  if (res.status === 401) {
+    logout();
+    throw new Error("unauthorized");
   }
-
   if (!res.ok) {
     let detail = "";
     try {
@@ -37,6 +36,8 @@ async function send<T>(path: string, init: RequestInit, retry = true): Promise<T
   if (res.status === 204) return undefined as T;
   return res.json() as Promise<T>;
 }
+
+const send = <T>(path: string, init: RequestInit): Promise<T> => sendAuth<T>(`${BASE}${path}`, init);
 
 const http = <T>(path: string, init: RequestInit = {}): Promise<T> => send<T>(path, init);
 
@@ -108,5 +109,45 @@ export function useDeleteContainer() {
   return useMutation({
     mutationFn: (name: string) => http<void>(`/containers/${name}`, { method: "DELETE" }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["containers"] }),
+  });
+}
+
+// ── Admin CLI tokens ──────────────────────────────────────────────────────
+// These hit /auth/v1/admin/* (not under /api/v1), so they call sendAuth directly.
+
+export interface AdminToken {
+  id: string;
+  label: string;
+  kind: string;
+  createdAt: string;
+  expiresAt: string;
+}
+
+export function useTokens() {
+  return useQuery({
+    queryKey: ["admin-tokens"],
+    queryFn: () => sendAuth<{ items: AdminToken[] }>("/auth/v1/admin/tokens", {}),
+    select: (d) => d.items ?? [],
+  });
+}
+
+export function useCreateToken() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (label: string) =>
+      sendAuth<{ id: string; token: string }>("/auth/v1/admin/tokens", {
+        method: "POST",
+        body: JSON.stringify({ label }),
+      }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["admin-tokens"] }),
+  });
+}
+
+export function useRevokeToken() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) =>
+      sendAuth<void>(`/auth/v1/admin/tokens/${id}`, { method: "DELETE" }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["admin-tokens"] }),
   });
 }
