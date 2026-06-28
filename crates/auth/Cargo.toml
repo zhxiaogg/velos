@@ -12,7 +12,7 @@ workspace = true
 [dependencies]
 velos-store = { workspace = true }
 chrono = { version = "0.4", features = ["serde"] }
-sha2 = "0.10"
+sha2 = "0.11"
 hex = "0.4"
 argon2 = { version = "0.5", features = ["std"] }
 uuid = { version = "1", features = ["v4"] }
