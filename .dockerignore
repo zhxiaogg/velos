@@ -1,0 +1,16 @@
+# Build artifacts and local state — never needed in the image build context.
+target/
+**/target/
+web/node_modules/
+web/dist/
+# Built UI is produced inside the image (web stage); ignore any local copy so it
+# doesn't shadow the freshly built assets.
+crates/server/ui/
+# Local datastore and editor/VCS noise.
+velos.db
+velos.db-*
+.git/
+.github/
+docs/
+*.md
+!crates/server/README.md
