@@ -41,6 +41,7 @@ token.
 | Password hashing | **argon2** (salted) for the human password; `Secret`/SHA-256 retained for high-entropy random tokens |
 | UI session storage | **Short-TTL opaque token in browser storage** (one code path, matches the CLI). HttpOnly cookie is a documented future hardening option |
 | Token resolution (ctl) | **`--token` flag > `VELOS_TOKEN` env > `~/.velos/config`** |
+| Server resolution (ctl) | **`--server` flag > `VELOS_SERVER` env > `~/.velos/config` > default**; `login` persists the server alongside the token |
 | Initialization gate | While uninitialized, **only `/auth/v1/status` and `/auth/v1/setup` are reachable**; everything else fails closed (401) |
 | OIDC | **Not now.** A `TokenVerifier` seam is added so an external OIDC IdP can be integrated later without endpoint changes |
 
@@ -155,12 +156,18 @@ changes**. Deep module (Principle #3): narrow interface, swappable implementatio
 
 ## velosctl
 
-- `velosctl login --token <tok> [--server <url>]` → `GET /auth/v1/me` to validate, then
-  save `{ server, token }` to `~/.velos/config` (mode **0600**). Refuses to save an
-  invalid token (fail closed).
-- `velosctl logout` → remove the saved credential.
+- `velosctl login --token <tok> [--server <url>]` → `GET /auth/v1/me` (against the
+  resolved server) to validate, then save **both** `server` and `token` to
+  `~/.velos/config` (mode **0600**). Refuses to save an invalid token (fail closed).
+  After `login`, plain commands like `velosctl get containers` need no flags — the saved
+  server **and** token are used.
+- `velosctl logout` → remove the saved credential (clears token; server may be retained
+  or cleared — cleared, for a clean slate).
 - **Token resolution precedence:** `--token` flag > `VELOS_TOKEN` env > `~/.velos/config`.
-  The `--server` flag follows the same precedence against a saved server.
+- **Server resolution precedence:** `--server` flag > `VELOS_SERVER` env >
+  `~/.velos/config` > built-in default (`http://127.0.0.1:8080`). The existing
+  `--server` default moves to the end of this chain so a saved server takes effect.
+- Config shape: `~/.velos/config` holds `{ "server": <url>, "token": <secret> }`.
 - Existing `velosctl token create` (bootstrap mint) keeps working; it now requires admin
   auth and so resolves a token the same way.
 - Pure config read/write/precedence logic lives in `velosctl::lib` (unit-tested);
@@ -211,8 +218,9 @@ Unauthenticated API responses (401) → redirect to login or setup based on
 - Worker scoping unchanged (regression).
 
 **velosctl unit tests** (`crates/velosctl`):
-- Config read/write round-trip; mode 0600.
+- Config read/write round-trip (server + token); mode 0600.
 - Token resolution precedence (flag > env > file), pure-function tested.
+- Server resolution precedence (flag > env > file > default), pure-function tested.
 
 **e2e** (`velos-tests`):
 - Boot apiserver with admin auth, run a scripted setup → login → mint CLI token →
