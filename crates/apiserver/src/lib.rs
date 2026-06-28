@@ -600,9 +600,7 @@ async fn setup(
         .ok_or_else(|| ApiError::BadRequest("password required".into()))?;
     match auth.setup_admin(username, &Secret::new(password)) {
         Ok(()) => Ok(Json(serde_json::json!({ "initialized": true }))),
-        Err(AuthError::AlreadyInitialized) => {
-            Err(ApiError::Conflict("already initialized".into()))
-        }
+        Err(AuthError::AlreadyInitialized) => Err(ApiError::Conflict("already initialized".into())),
         Err(AuthError::Invalid) => Err(ApiError::BadRequest("invalid setup".into())),
         Err(e) => Err(ApiError::Internal(e.to_string())),
     }
@@ -614,8 +612,14 @@ async fn login(
     Json(req): Json<Value>,
 ) -> Result<Json<Value>, ApiError> {
     let auth = state.auth.as_ref().ok_or(ApiError::NotFound)?;
-    let username = req.get("username").and_then(Value::as_str).unwrap_or_default();
-    let password = req.get("password").and_then(Value::as_str).unwrap_or_default();
+    let username = req
+        .get("username")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let password = req
+        .get("password")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
     auth.verify_password(username, &Secret::new(password))
         .map_err(|_| ApiError::Unauthorized)?;
     let token = auth
@@ -683,7 +687,9 @@ async fn create_token(
     let minted = auth
         .mint_cli_token(label, ttl)
         .map_err(|e| ApiError::Internal(e.to_string()))?;
-    Ok(Json(serde_json::json!({ "id": minted.id, "token": minted.token })))
+    Ok(Json(
+        serde_json::json!({ "id": minted.id, "token": minted.token }),
+    ))
 }
 
 /// `DELETE /auth/v1/admin/tokens/:id` — revoke an admin token (admin-only).
@@ -768,10 +774,7 @@ pub fn app_with_auth(store: Arc<dyn Store>, auth: Arc<dyn AuthService>) -> Route
         .route("/auth/v1/setup", post(setup))
         .route("/auth/v1/login", post(login))
         .route("/auth/v1/me", get(whoami))
-        .route(
-            "/auth/v1/admin/tokens",
-            get(list_tokens).post(create_token),
-        )
+        .route("/auth/v1/admin/tokens", get(list_tokens).post(create_token))
         .route(
             "/auth/v1/admin/tokens/:id",
             axum::routing::delete(revoke_token),
@@ -1268,7 +1271,10 @@ mod tests {
         )
         .await;
         assert_eq!(resp.status(), StatusCode::OK);
-        assert_eq!(body_json(resp).await["initialized"], serde_json::json!(false));
+        assert_eq!(
+            body_json(resp).await["initialized"],
+            serde_json::json!(false)
+        );
 
         // any /api/v1 call is rejected while uninitialized
         let resp = send(
@@ -1337,7 +1343,10 @@ mod tests {
         )
         .await;
         assert_eq!(resp.status(), StatusCode::OK);
-        assert_eq!(body_json(resp).await["identity"], serde_json::json!("admin"));
+        assert_eq!(
+            body_json(resp).await["identity"],
+            serde_json::json!("admin")
+        );
 
         // admin can mint a bootstrap token now
         let resp = send(

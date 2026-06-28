@@ -129,7 +129,10 @@ mod tests {
             "http://env:1"
         );
         assert_eq!(resolve_server(None, None, &cfg), "http://cfg:1");
-        assert_eq!(resolve_server(None, None, &Config::default()), DEFAULT_SERVER);
+        assert_eq!(
+            resolve_server(None, None, &Config::default()),
+            DEFAULT_SERVER
+        );
     }
 
     #[test]
