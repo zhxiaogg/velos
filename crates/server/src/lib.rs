@@ -705,6 +705,13 @@ async fn revoke_token(
     Ok(Json(serde_json::json!({ "revoked": id })))
 }
 
+/// `GET /healthz` — unauthenticated liveness/readiness probe. Returns 200 with a
+/// plain-text body once the server is accepting connections. Used by the
+/// container `HEALTHCHECK` (via `velos-server --health-check`).
+async fn healthz() -> impl IntoResponse {
+    ([(header::CONTENT_TYPE, "text/plain")], "ok")
+}
+
 fn api_routes() -> Router<AppState> {
     Router::new()
         .route("/api/v1/{plural}", post(create).get(list_or_watch))
@@ -754,7 +761,10 @@ async fn serve_ui(uri: Uri) -> Response {
 /// Build the server with no authentication (dev / tests / e2e).
 pub fn app(store: Arc<dyn Store>) -> Router {
     let state = AppState { store, auth: None };
-    api_routes().fallback(serve_ui).with_state(state)
+    api_routes()
+        .route("/healthz", get(healthz))
+        .fallback(serve_ui)
+        .with_state(state)
 }
 
 /// Build the server with bootstrap-token auth: `/auth/v1` endpoints are open
@@ -770,6 +780,7 @@ pub fn app_with_auth(store: Arc<dyn Store>, auth: Arc<dyn AuthService>) -> Route
         require_auth,
     ));
     Router::new()
+        .route("/healthz", get(healthz))
         .route("/auth/v1/status", get(auth_status))
         .route("/auth/v1/setup", post(setup))
         .route("/auth/v1/login", post(login))
@@ -805,6 +816,34 @@ mod tests {
             .await
             .unwrap();
         serde_json::from_slice(&bytes).unwrap()
+    }
+
+    #[tokio::test]
+    async fn healthz_returns_200_unauthenticated() {
+        // Liveness probe must be reachable without credentials, on both the
+        // no-auth and the auth-enabled router.
+        let store: Arc<dyn Store> = Arc::new(velos_store::SqliteStore::in_memory().unwrap());
+        let auth: Arc<dyn AuthService> =
+            Arc::new(velos_auth::StoreAuthenticator::new(Arc::clone(&store)));
+        for app in [app(Arc::clone(&store)), app_with_auth(store, auth)] {
+            let resp = app
+                .oneshot(
+                    Request::builder()
+                        .method("GET")
+                        .uri("/healthz")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(resp.status(), StatusCode::OK);
+            // Must be the explicit health route, not the SPA fallback serving
+            // index.html — assert the exact plain-text body.
+            let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+                .await
+                .unwrap();
+            assert_eq!(&bytes[..], b"ok");
+        }
     }
 
     #[tokio::test]
