@@ -12,7 +12,7 @@ use std::time::Duration;
 
 use axum::body::Body;
 use axum::extract::{Path, Query, Request, State};
-use axum::http::{HeaderMap, StatusCode, header};
+use axum::http::{HeaderMap, StatusCode, Uri, header};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post, put};
@@ -550,10 +550,46 @@ fn api_routes() -> Router<AppState> {
         .route("/api/v1/:plural/:name/status", put(replace_status))
 }
 
+// ---------------------------------------------------------------------------
+// Embedded web UI
+// ---------------------------------------------------------------------------
+
+/// The built dashboard (`crates/apiserver/ui`, produced by `web`'s `npm run
+/// build`). Debug builds read it from disk at runtime; release builds embed it.
+#[derive(rust_embed::RustEmbed)]
+#[folder = "ui/"]
+struct WebUi;
+
+/// Serve the embedded dashboard. Unknown paths fall back to `index.html` so the
+/// single-page app can own client-side routing. API/auth paths are never served
+/// here — they are explicit routes, and an unmatched one is a real 404.
+async fn serve_ui(uri: Uri) -> Response {
+    let path = uri.path().trim_start_matches('/');
+
+    if path.starts_with("api/") || path.starts_with("auth/") {
+        return ApiError::NotFound.into_response();
+    }
+
+    let asset = if path.is_empty() { "index.html" } else { path };
+    if let Some(file) = WebUi::get(asset) {
+        let mime = file.metadata.mimetype().to_string();
+        return ([(header::CONTENT_TYPE, mime)], file.data).into_response();
+    }
+
+    match WebUi::get("index.html") {
+        Some(index) => ([(header::CONTENT_TYPE, "text/html")], index.data).into_response(),
+        None => (
+            StatusCode::NOT_FOUND,
+            "web UI not built — run `npm run build` in web/",
+        )
+            .into_response(),
+    }
+}
+
 /// Build the apiserver with no authentication (dev / tests / e2e).
 pub fn app(store: Arc<dyn Store>) -> Router {
     let state = AppState { store, auth: None };
-    api_routes().with_state(state)
+    api_routes().fallback(serve_ui).with_state(state)
 }
 
 /// Build the apiserver with bootstrap-token auth: `/auth/v1` endpoints are open
@@ -572,6 +608,7 @@ pub fn app_with_auth(store: Arc<dyn Store>, auth: Arc<dyn AuthService>) -> Route
         .route("/auth/v1/tokens", post(mint_token))
         .route("/auth/v1/register", post(register))
         .merge(protected)
+        .fallback(serve_ui)
         .with_state(state)
 }
 

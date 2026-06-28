@@ -33,6 +33,10 @@ thiserror = "1.0"
 anyhow = "1.0"
 tracing = "0.1"
 tracing-subscriber = "0.3"
+# Embeds the built web UI (crates/apiserver/ui) into the binary so the apiserver
+# can serve the dashboard with no separate process. Debug builds read from disk;
+# release builds embed at compile time.
+rust-embed = { version = "8", features = ["mime-guess"] }
 
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }

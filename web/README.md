@@ -16,28 +16,39 @@ A PoC dashboard for the Velos control plane — TypeScript + React + Vite + Tail
 
 Data auto-refreshes every 2s.
 
-## How auth works (no Rust changes, token-free browser)
+## How it's served
 
-The Velos apiserver requires a worker credential on every `/api/v1/*` call. The
-Vite dev server handles this entirely:
+`npm run build` emits the bundle into `../crates/apiserver/ui`, which the
+**apiserver embeds and serves itself** (via `rust-embed`). In production there is
+no separate web process — `velos-apiserver` serves the dashboard same-origin
+alongside the API, and unknown paths fall back to `index.html` for client-side
+routing. A `cargo install velos-apiserver` therefore ships a working UI.
 
-1. A small plugin (`velosAuth` in `vite.config.ts`) mints a bootstrap token via
-   the open `POST /auth/v1/tokens`, exchanges it at `POST /auth/v1/register` for a
-   durable credential under the identity `velos-dashboard`, then deletes that
-   identity's `Worker` object (the credential survives) so it never pollutes the
-   workers list.
-2. All browser traffic goes to a same-origin `/velos/*` prefix, which the dev
-   server proxies to `http://127.0.0.1:8080`, injecting `Authorization: Bearer
-   <credential>`. The browser never sees a token and there are no CORS concerns.
+## Auth (interim)
 
-Point at a different apiserver with `VELOS_SERVER=http://host:port npm run dev`.
+Velos requires a worker credential on every `/api/v1/*` call, and real operator
+auth is not built yet. Until then the browser obtains a credential itself
+(`src/auth.ts`): it mints a bootstrap token (`POST /auth/v1/tokens`), exchanges
+it for a durable credential under the identity `velos-dashboard`
+(`POST /auth/v1/register`), then deletes that identity's `Worker` object so it
+never appears in the workers list (the credential is stored separately and lives
+on). The credential is cached in `localStorage` and re-minted if rejected. This
+runs identically whether the bundle is served by the apiserver or by `npm run
+dev`.
 
-## Run
+> This open bootstrap flow is a placeholder. A future change adds real
+> authentication between the dashboard and the server.
 
-Prerequisites: the apiserver running on `127.0.0.1:8080` with at least one
-registered worker (a `veloslet`).
+## Develop
+
+The apiserver serves the built bundle, so for production you only need
+`make build` (or `make web`) and then run `velos-apiserver`. For a fast
+edit/reload loop, run the Vite dev server, which proxies the API/auth paths to
+the apiserver (purely to avoid CORS):
 
 ```bash
 npm install
-npm run dev      # http://localhost:5173
+npm run dev      # http://localhost:5173, proxies to the apiserver on :8080
 ```
+
+Point the proxy at a different apiserver with `VELOS_SERVER=http://host:port npm run dev`.
