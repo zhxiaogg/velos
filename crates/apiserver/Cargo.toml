@@ -5,6 +5,10 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "The Velos control-plane API server: REST surface, scheduler, and controllers."
+# The built UI (ui/) is gitignored and produced just-in-time. An explicit
+# `include` overrides gitignore at package time, so a CI build that populated
+# ui/ is still baked into the published crate (keeping `cargo install` working).
+include = ["src/**/*", "ui/**/*"]
 
 [lints]
 workspace = true
