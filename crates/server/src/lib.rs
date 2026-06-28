@@ -822,12 +822,10 @@ mod tests {
     async fn healthz_returns_200_unauthenticated() {
         // Liveness probe must be reachable without credentials, on both the
         // no-auth and the auth-enabled router.
-        let store = Arc::new(velos_store::SqliteStore::in_memory().unwrap());
-        let auth = Arc::new(velos_auth::StoreAuthenticator::new(Arc::clone(&store) as Arc<dyn Store>));
-        for app in [
-            app(Arc::clone(&store) as Arc<dyn Store>),
-            app_with_auth(store as Arc<dyn Store>, auth as Arc<dyn AuthService>),
-        ] {
+        let store: Arc<dyn Store> = Arc::new(velos_store::SqliteStore::in_memory().unwrap());
+        let auth: Arc<dyn AuthService> =
+            Arc::new(velos_auth::StoreAuthenticator::new(Arc::clone(&store)));
+        for app in [app(Arc::clone(&store)), app_with_auth(store, auth)] {
             let resp = app
                 .oneshot(
                     Request::builder()
