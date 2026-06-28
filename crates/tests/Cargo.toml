@@ -11,11 +11,11 @@ workspace = true
 [dependencies]
 
 [dev-dependencies]
-velos-apiserver = { path = "../apiserver" }
-velos-store = { path = "../store" }
-velos-runtime = { path = "../runtime" }
-velos-auth = { path = "../auth" }
-veloslet = { path = "../veloslet" }
+velos-apiserver = { workspace = true }
+velos-store = { workspace = true }
+velos-runtime = { workspace = true }
+velos-auth = { workspace = true }
+veloslet = { workspace = true }
 axum = "0.7"
 tokio = { version = "1", features = ["full"] }
 reqwest = { version = "0.12", default-features = false, features = ["json"] }

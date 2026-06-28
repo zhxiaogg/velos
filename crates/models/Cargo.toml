@@ -3,6 +3,8 @@ name = "velos-models"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
+description = "Velos wire/protocol types, generated from a fluorite schema."
 
 [lints]
 workspace = true

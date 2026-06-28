@@ -3,6 +3,8 @@ name = "velos-scheduler"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
+description = "The Velos scheduler: a pure function that binds a workload to a worker."
 
 [lints]
 workspace = true
