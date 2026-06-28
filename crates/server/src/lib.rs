@@ -692,7 +692,7 @@ async fn create_token(
     ))
 }
 
-/// `DELETE /auth/v1/admin/tokens/:id` — revoke an admin token (admin-only).
+/// `DELETE /auth/v1/admin/tokens/{id}` — revoke an admin token (admin-only).
 async fn revoke_token(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -707,12 +707,12 @@ async fn revoke_token(
 
 fn api_routes() -> Router<AppState> {
     Router::new()
-        .route("/api/v1/:plural", post(create).get(list_or_watch))
+        .route("/api/v1/{plural}", post(create).get(list_or_watch))
         .route(
-            "/api/v1/:plural/:name",
+            "/api/v1/{plural}/{name}",
             get(get_one).put(replace).delete(delete),
         )
-        .route("/api/v1/:plural/:name/status", put(replace_status))
+        .route("/api/v1/{plural}/{name}/status", put(replace_status))
 }
 
 // ---------------------------------------------------------------------------
@@ -776,7 +776,7 @@ pub fn app_with_auth(store: Arc<dyn Store>, auth: Arc<dyn AuthService>) -> Route
         .route("/auth/v1/me", get(whoami))
         .route("/auth/v1/admin/tokens", get(list_tokens).post(create_token))
         .route(
-            "/auth/v1/admin/tokens/:id",
+            "/auth/v1/admin/tokens/{id}",
             axum::routing::delete(revoke_token),
         )
         .route("/auth/v1/tokens", post(mint_token))
