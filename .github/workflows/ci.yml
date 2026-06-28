@@ -35,3 +35,25 @@ jobs:
         # The real Apple-Containerization e2e (`e2e_apple`) is always enabled but
         # self-skips here (no `container` CLI / no virtualization). It runs for
         # real locally on Apple silicon (see crates/tests).
+
+  web:
+    name: web build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install
+        run: npm ci
+
+      - name: Build
+        run: npm run build
