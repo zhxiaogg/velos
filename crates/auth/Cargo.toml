@@ -17,4 +17,4 @@ hex = "0.4"
 argon2 = { version = "0.5", features = ["std"] }
 uuid = { version = "1", features = ["v4"] }
 serde_json = "1.0"
-thiserror = "1.0"
+thiserror = "2.0"
