@@ -10,9 +10,9 @@ const VELOS = process.env.VELOS_SERVER ?? "http://127.0.0.1:8080";
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
-  // The apiserver embeds this directory (crates/apiserver/ui) and serves it.
+  // The server embeds this directory (crates/server/ui) and serves it.
   build: {
-    outDir: "../crates/apiserver/ui",
+    outDir: "../crates/server/ui",
     emptyOutDir: true,
   },
   server: {

@@ -719,7 +719,7 @@ fn api_routes() -> Router<AppState> {
 // Embedded web UI
 // ---------------------------------------------------------------------------
 
-/// The built dashboard (`crates/apiserver/ui`, produced by `web`'s `npm run
+/// The built dashboard (`crates/server/ui`, produced by `web`'s `npm run
 /// build`). Debug builds read it from disk at runtime; release builds embed it.
 #[derive(rust_embed::RustEmbed)]
 #[folder = "ui/"]

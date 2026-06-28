@@ -32,7 +32,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
 
       # The web UI is not committed; build it just-in-time so `include` bakes it
-      # into the published velos-apiserver crate.
+      # into the published velos-server crate.
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
@@ -106,7 +106,7 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
-      # Build the (uncommitted) web UI so it is embedded into velos-apiserver.
+      # Build the (uncommitted) web UI so it is embedded into velos-server.
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
@@ -114,12 +114,18 @@ jobs:
         run: cd web && npm ci && npm run build
 
       - name: Build
-        run: cargo build --release --locked --target ${{ matrix.target }} -p velos-apiserver -p veloslet -p velosctl
+        run: cargo build --release --locked --target ${{ matrix.target }} -p velos-server -p veloslet -p velosctl
 
       - name: Package
         run: |
+          bindir="target/${{ matrix.target }}/release"
           tar -czf "velos-${GITHUB_REF_NAME}-${{ matrix.target }}.tar.gz" \
-            -C "target/${{ matrix.target }}/release" velos-apiserver veloslet velosctl
+            -C "$bindir" velos-server veloslet velosctl
+          # Also expose the client/agent binaries as standalone, directly
+          # downloadable assets (target-suffixed so the four matrix jobs don't
+          # clobber each other).
+          cp "$bindir/velosctl" "velosctl-${GITHUB_REF_NAME}-${{ matrix.target }}"
+          cp "$bindir/veloslet" "veloslet-${GITHUB_REF_NAME}-${{ matrix.target }}"
 
       - name: Upload to GitHub release
         env:
@@ -127,4 +133,8 @@ jobs:
         run: |
           # First matrix job to get here creates the release; the rest just upload.
           gh release create "$GITHUB_REF_NAME" --verify-tag --title "$GITHUB_REF_NAME" --generate-notes 2>/dev/null || true
-          gh release upload "$GITHUB_REF_NAME" "velos-${GITHUB_REF_NAME}-${{ matrix.target }}.tar.gz" --clobber
+          gh release upload "$GITHUB_REF_NAME" \
+            "velos-${GITHUB_REF_NAME}-${{ matrix.target }}.tar.gz" \
+            "velosctl-${GITHUB_REF_NAME}-${{ matrix.target }}" \
+            "veloslet-${GITHUB_REF_NAME}-${{ matrix.target }}" \
+            --clobber

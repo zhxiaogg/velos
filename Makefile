@@ -1,6 +1,6 @@
 .PHONY: build web test fmt clippy check run
 
-# Build the web UI into crates/apiserver/ui (embedded by the apiserver) and then
+# Build the web UI into crates/server/ui (embedded by the server) and then
 # the whole workspace. Run `make web` alone to rebuild just the dashboard.
 build: web
 	cargo build --workspace
@@ -23,4 +23,4 @@ check:
 	cargo test --workspace
 
 run:
-	cargo run -p velos-apiserver
+	cargo run -p velos-server
