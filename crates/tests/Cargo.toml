@@ -16,7 +16,7 @@ velos-store = { workspace = true }
 velos-runtime = { workspace = true }
 velos-auth = { workspace = true }
 veloslet = { workspace = true }
-axum = "0.7"
+axum = "0.8"
 tokio = { version = "1", features = ["full"] }
 reqwest = { version = "0.13", default-features = false, features = ["json"] }
 serde_json = "1.0"
