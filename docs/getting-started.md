@@ -40,7 +40,7 @@ container --version
 ### Via cargo
 
 ```bash
-cargo install velos-apiserver   # control plane (the web dashboard is built in)
+cargo install velos-server   # control plane (the web dashboard is built in)
 cargo install velosctl          # CLI
 cargo install veloslet          # worker agent
 ```
@@ -53,14 +53,14 @@ cd velos
 make build      # builds the web UI, then all binaries into target/debug/
 ```
 
-The rest of this guide uses bare command names (`velos-apiserver`, `velosctl`,
+The rest of this guide uses bare command names (`velos-server`, `velosctl`,
 `veloslet`); if you built from source, run them from `./target/debug/` or add
 that directory to your `PATH`.
 
 ## 3. Start the control plane
 
 ```bash
-velos-apiserver
+velos-server
 ```
 
 - Listens on **`127.0.0.1:8080`** and serves both the API and the **web
@@ -68,7 +68,24 @@ velos-apiserver
 - Creates a SQLite database **`velos.db`** in the working directory.
 - Runs the scheduler (every ~2s) and the worker-health controller (every ~5s).
 
-Control log verbosity with `RUST_LOG`, e.g. `RUST_LOG=info velos-apiserver`.
+The bind address and database path are configurable:
+
+| Setting | Flag | Env | Default |
+|---|---|---|---|
+| Listen address | `--listen` | `VELOS_LISTEN` | `127.0.0.1:8080` |
+| Database path | `--db` | `VELOS_DB` | `velos.db` |
+
+```bash
+velos-server --listen 0.0.0.0:8080 --db /var/lib/velos/velos.db
+# or via env:
+VELOS_LISTEN=0.0.0.0:8080 velos-server
+```
+
+> Binding `0.0.0.0` exposes the server on the network. That's reasonable now that
+> auth is enforced (§9), but anyone who can reach the port can still attempt the
+> first-run setup — initialize the admin account promptly.
+
+Control log verbosity with `RUST_LOG`, e.g. `RUST_LOG=info velos-server`.
 
 A freshly started server is **uninitialized** and fails closed: every route
 except the first-run setup is rejected until you create the admin account
@@ -277,7 +294,7 @@ Auth endpoints at a glance:
 
 ```bash
 # Stop the processes (Ctrl-C in their terminals, or:)
-pkill -f velos-apiserver
+pkill -f velos-server
 pkill -f veloslet
 
 # Forget the saved CLI credential

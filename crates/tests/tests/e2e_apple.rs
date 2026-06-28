@@ -22,10 +22,10 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
-use velos_apiserver::app_with_auth;
-use velos_apiserver::controllers::{self, ControllerConfig};
 use velos_auth::{AuthService, StoreAuthenticator};
 use velos_runtime::{AppleContainer, ContainerRuntime, RunSpec};
+use velos_server::app_with_auth;
+use velos_server::controllers::{self, ControllerConfig};
 use velos_store::{SqliteStore, Store};
 use veloslet::{ApiClient, run_loop};
 

@@ -11,7 +11,7 @@ workspace = true
 [dependencies]
 
 [dev-dependencies]
-velos-apiserver = { workspace = true }
+velos-server = { workspace = true }
 velos-store = { workspace = true }
 velos-runtime = { workspace = true }
 velos-auth = { workspace = true }

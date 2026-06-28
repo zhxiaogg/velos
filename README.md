@@ -13,7 +13,7 @@ direction.
 
 ```
    velosctl ─┐                  ┌──────────────────────────────┐
-   (CLI)     │                  │         velos-apiserver        │
+   (CLI)     │                  │          velos-server          │
    dashboard ├───  REST  ──────▶│  REST API · scheduler ·        │
    (browser) │   (Bearer)       │  reconciliation · web UI       │
              │                  │  SQLite-backed object store    │
@@ -28,9 +28,10 @@ direction.
 
 ## Components
 
-- **`velos-apiserver`** — the control plane. Serves the REST API, persists objects
+- **`velos-server`** — the control plane. Serves the REST API, persists objects
   in SQLite, runs the scheduler and reconciliation loops, and serves the web
-  dashboard (embedded in the binary).
+  dashboard (embedded in the binary). Bind address and DB path are configurable
+  via `--listen`/`VELOS_LISTEN` and `--db`/`VELOS_DB`.
 - **`veloslet`** — the per-worker agent. Registers its machine, renews a lease to
   prove liveness, and reconciles its assigned containers against the runtime.
 - **`velosctl`** — a command-line client for the API. `velosctl login` saves an
@@ -55,7 +56,7 @@ under `/api/v1/{plural}`:
 Install with cargo:
 
 ```bash
-cargo install velos-apiserver velosctl veloslet
+cargo install velos-server velosctl veloslet
 ```
 
 …or build from source with `make build` (which also builds the embedded dashboard).

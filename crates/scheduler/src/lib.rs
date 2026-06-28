@@ -3,7 +3,7 @@
 //!
 //! Principle #5 (pure core): `schedule` is a total function of its inputs with no
 //! I/O. The controller that observes state and writes the binding lives elsewhere
-//! (`velos-apiserver`); this crate only decides.
+//! (`velos-server`); this crate only decides.
 
 /// A worker's name — a semantic type, not a bare `String` (Principle #1).
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]

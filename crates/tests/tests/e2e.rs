@@ -6,8 +6,8 @@
 
 use std::sync::Arc;
 
-use velos_apiserver::{app, controllers};
 use velos_runtime::FakeRuntime;
+use velos_server::{app, controllers};
 use velos_store::{SqliteStore, Store};
 use veloslet::{ApiClient, run_once};
 
@@ -111,7 +111,7 @@ async fn container_runs_through_full_lifecycle() {
 async fn start_auth() -> String {
     let store: Arc<dyn Store> = Arc::new(SqliteStore::in_memory().unwrap());
     let auth = Arc::new(velos_auth::StoreAuthenticator::new(Arc::clone(&store)));
-    let router = velos_apiserver::app_with_auth(store, auth);
+    let router = velos_server::app_with_auth(store, auth);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     tokio::spawn(async move {
