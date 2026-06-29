@@ -73,8 +73,7 @@ export function Workers() {
 
                 <div className="mt-4 flex items-center justify-between border-t border-white/5 pt-3 text-xs text-zinc-500">
                   <span>
-                    <span className="font-mono text-zinc-300">{active.length}</span> /{" "}
-                    {w.status?.allocatable?.maxContainers ?? "—"} slots
+                    <span className="font-mono text-zinc-300">{active.length}</span> running
                   </span>
                   <span>
                     lease{" "}
@@ -152,8 +151,7 @@ function WorkerDrawer({
         <Field label="Runtime">{worker.status?.containerRuntimeVersion ?? "unknown"}</Field>
         <Field label="Schedulable">{worker.spec.unschedulable ? "No (cordoned)" : "Yes"}</Field>
         <Field label="Capacity">
-          {worker.status?.capacity?.cpu ?? "—"} cores · {fmtBytes(worker.status?.capacity?.memoryBytes)} ·{" "}
-          {worker.status?.capacity?.maxContainers ?? "—"} max
+          {worker.status?.capacity?.cpu ?? "—"} cores · {fmtBytes(worker.status?.capacity?.memoryBytes)}
         </Field>
         <Field label="Addresses">
           {worker.status?.addresses?.length ? worker.status.addresses.join(", ") : "—"}

@@ -8,6 +8,8 @@ use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 use velos_runtime::{AppleContainer, ContainerRuntime};
 use veloslet::daemon::{self, BUNDLE_EXECUTABLE, BUNDLE_ID, WorkerConfig};
+use veloslet::host::{detect_host, validate_capacity};
+use veloslet::memory::Memory;
 use veloslet::{ApiClient, run_loop};
 
 /// The Velos worker daemon.
@@ -45,6 +47,12 @@ struct RunArgs {
     /// Bootstrap token (`id.secret`) used to register on first start.
     #[arg(long)]
     token: Option<String>,
+    /// Advertised CPU cores (overrides config).
+    #[arg(long)]
+    cpu: Option<u32>,
+    /// Advertised memory, e.g. `8G` (overrides config).
+    #[arg(long)]
+    memory: Option<Memory>,
     /// Reconcile interval in seconds.
     #[arg(long)]
     reconcile_secs: Option<u64>,
@@ -67,6 +75,12 @@ struct InstallArgs {
     /// Bootstrap token (`id.secret`), e.g. from `velosctl token create`.
     #[arg(long)]
     token: String,
+    /// Advertised CPU cores.
+    #[arg(long)]
+    cpu: u32,
+    /// Advertised memory, e.g. `8G`.
+    #[arg(long)]
+    memory: Memory,
     /// Reconcile interval in seconds.
     #[arg(long, default_value_t = 5)]
     reconcile_secs: u64,
@@ -149,6 +163,12 @@ fn resolve_run_config(args: RunArgs) -> Result<WorkerConfig> {
                 .token
                 .clone()
                 .context("--token is required when --config is not given")?,
+            cpu: args
+                .cpu
+                .context("--cpu is required when --config is not given")?,
+            memory: args
+                .memory
+                .context("--memory is required when --config is not given")?,
             reconcile_secs: 5,
             heartbeat_secs: 10,
             lease_secs: 40,
@@ -164,6 +184,12 @@ fn resolve_run_config(args: RunArgs) -> Result<WorkerConfig> {
     if let Some(v) = args.token {
         cfg.token = v;
     }
+    if let Some(v) = args.cpu {
+        cfg.cpu = v;
+    }
+    if let Some(v) = args.memory {
+        cfg.memory = v;
+    }
     if let Some(v) = args.reconcile_secs {
         cfg.reconcile_secs = v;
     }
@@ -177,6 +203,10 @@ fn resolve_run_config(args: RunArgs) -> Result<WorkerConfig> {
 }
 
 async fn run(cfg: WorkerConfig) -> Result<()> {
+    // Fail closed: never advertise more than the machine physically has.
+    let host = detect_host()?;
+    validate_capacity(cfg.cpu, cfg.memory, host)?;
+
     let runtime = AppleContainer::new();
     let runtime_version = runtime
         .version()
@@ -187,7 +217,7 @@ async fn run(cfg: WorkerConfig) -> Result<()> {
     let boot = ApiClient::new(&cfg.server, Some(cfg.token.clone()));
     let request = serde_json::json!({
         "name": cfg.node,
-        "capacity": { "cpu": 4, "memoryBytes": 8u64 * 1024 * 1024 * 1024, "maxContainers": 16 },
+        "capacity": { "cpu": cfg.cpu, "memoryBytes": cfg.memory.bytes() },
         "addresses": [],
         "containerRuntimeVersion": runtime_version,
     });
@@ -245,6 +275,10 @@ fn install(args: InstallArgs) -> Result<()> {
     let paths = Paths::resolve()?;
     let version = env!("CARGO_PKG_VERSION");
 
+    // Reject impossible capacity before touching the filesystem or launchd.
+    let host = detect_host()?;
+    validate_capacity(args.cpu, args.memory, host)?;
+
     // 1. App bundle: copy this running binary into Velos.app and give it a
     //    bundle identity so Local Network privacy can attribute its traffic.
     let src_exe = std::env::current_exe().context("locating the running veloslet binary")?;
@@ -281,6 +315,8 @@ fn install(args: InstallArgs) -> Result<()> {
         server: args.server,
         node: args.node,
         token: args.token,
+        cpu: args.cpu,
+        memory: args.memory,
         reconcile_secs: args.reconcile_secs,
         heartbeat_secs: args.heartbeat_secs,
         lease_secs: args.lease_secs,

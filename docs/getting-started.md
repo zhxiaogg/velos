@@ -147,7 +147,8 @@ node-scoped worker credential on first start.
 TOKEN=$(velosctl token create | jq -r '"\(.tokenId).\(.secret)"')
 
 # Run the worker agent in the foreground. It registers on start, then renews its lease.
-veloslet run --server http://127.0.0.1:8080 --node "$(hostname -s)" --token "$TOKEN"
+veloslet run --server http://127.0.0.1:8080 --node "$(hostname -s)" --token "$TOKEN" \
+  --cpu 8 --memory 16G
 ```
 
 `veloslet run` flags (also accepted via `--config`, see below):
@@ -158,6 +159,8 @@ veloslet run --server http://127.0.0.1:8080 --node "$(hostname -s)" --token "$TO
 | `--server` | *(required)* | control-plane base URL |
 | `--node` | *(required)* | this worker's unique name |
 | `--token` | *(required)* | bootstrap token used to register on start |
+| `--cpu` | *(required)* | advertised CPU cores; must not exceed the machine's |
+| `--memory` | *(required)* | advertised memory, e.g. `16G`; must not exceed the machine's |
 | `--reconcile-secs` | `5` | how often it reconciles its containers |
 | `--heartbeat-secs` | `10` | how often it renews its lease |
 | `--lease-secs` | `40` | lease duration; not renewed in time → worker goes `NotReady` |
@@ -174,8 +177,16 @@ velosctl get workers
 **LaunchAgent** on macOS) so it starts at login and restarts on crash:
 
 ```bash
-veloslet install --server http://127.0.0.1:8080 --node "$(hostname -s)" --token "$TOKEN"
+veloslet install --server http://127.0.0.1:8080 --node "$(hostname -s)" --token "$TOKEN" \
+  --cpu 8 --memory 16G
 ```
+
+`--cpu` and `--memory` are required and validated against the host: the worker
+refuses to start (or install) if you advertise more than the machine physically
+has. Memory accepts human sizes (`512M`, `8G`, base-1024). After upgrading from a
+build that hardcoded capacity, existing installs must be re-run with these flags
+(or have `cpu`/`memory` added to `~/.velos/veloslet.json`) before the worker will
+start.
 
 This writes the settings to `~/.velos/veloslet.json` (mode `0600` — it holds the
 token, so it's kept out of the process arguments), loads the agent, and starts it.

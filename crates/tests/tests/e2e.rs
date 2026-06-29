@@ -58,7 +58,7 @@ async fn container_runs_through_full_lifecycle() {
             "metadata": { "name": "w1" },
             "spec": { "unschedulable": false },
             "status": {
-                "allocatable": { "cpu": 4, "memoryBytes": 8589934592u64, "maxContainers": 8 },
+                "allocatable": { "cpu": 4, "memoryBytes": 8589934592u64 },
                 "conditions": [{ "conditionType": "Ready", "status": true }]
             }
         }),

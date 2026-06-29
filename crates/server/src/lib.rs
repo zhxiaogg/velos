@@ -1529,7 +1529,7 @@ mod tests {
                 .body(Body::from(
                     serde_json::json!({
                         "name": "w1",
-                        "capacity": { "cpu": 4, "memoryBytes": 8589934592u64, "maxContainers": 8 },
+                        "capacity": { "cpu": 4, "memoryBytes": 8589934592u64 },
                         "containerRuntimeVersion": "fake/1.0"
                     })
                     .to_string(),

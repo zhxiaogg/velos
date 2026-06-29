@@ -59,7 +59,6 @@ struct Container {
 struct NodeResources {
     cpu: u32,
     memory_bytes: u64,
-    max_containers: u32,
 }
 
 enum NodeConditionType {

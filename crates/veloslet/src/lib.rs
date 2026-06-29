@@ -7,6 +7,8 @@
 
 pub mod client;
 pub mod daemon;
+pub mod host;
+pub mod memory;
 pub mod reconcile;
 
 use std::sync::Arc;

@@ -56,7 +56,6 @@ export interface Container {
 export interface Capacity {
   cpu?: number;
   memoryBytes?: number;
-  maxContainers?: number;
 }
 
 export interface WorkerCondition {

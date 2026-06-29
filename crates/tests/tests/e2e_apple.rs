@@ -160,7 +160,7 @@ async fn real_container_lifecycle_with_apple_containerization() {
     let reg = boot_client
         .register(&json!({
             "name": NODE,
-            "capacity": { "cpu": 4, "memoryBytes": 8589934592u64, "maxContainers": 16 },
+            "capacity": { "cpu": 4, "memoryBytes": 8589934592u64 },
             "addresses": [],
             "containerRuntimeVersion": "apple-containerization",
         }))
