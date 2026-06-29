@@ -75,11 +75,11 @@ impl fmt::Display for Memory {
         const M: u64 = 1024 * 1024;
         const K: u64 = 1024;
         let b = self.0;
-        if b != 0 && b % G == 0 {
+        if b != 0 && b.is_multiple_of(G) {
             write!(f, "{}G", b / G)
-        } else if b != 0 && b % M == 0 {
+        } else if b != 0 && b.is_multiple_of(M) {
             write!(f, "{}M", b / M)
-        } else if b != 0 && b % K == 0 {
+        } else if b != 0 && b.is_multiple_of(K) {
             write!(f, "{}K", b / K)
         } else {
             write!(f, "{b}")
