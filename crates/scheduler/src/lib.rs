@@ -27,8 +27,6 @@ pub struct WorkerView {
     pub allocatable: ResourceRequest,
     /// Resources already committed to containers bound here.
     pub allocated: ResourceRequest,
-    pub running_containers: u32,
-    pub max_containers: u32,
 }
 
 impl WorkerView {
@@ -48,7 +46,6 @@ impl WorkerView {
     fn admits(&self, req: &ResourceRequest) -> bool {
         self.ready
             && !self.unschedulable
-            && self.running_containers < self.max_containers
             && self.free_cpu() >= req.cpu
             && self.free_memory() >= req.memory_bytes
     }
@@ -79,8 +76,6 @@ mod tests {
         mem: u64,
         used_cpu: u32,
         used_mem: u64,
-        running: u32,
-        max: u32,
     ) -> WorkerView {
         WorkerView {
             name: WorkerName(name.to_string()),
@@ -94,8 +89,6 @@ mod tests {
                 cpu: used_cpu,
                 memory_bytes: used_mem,
             },
-            running_containers: running,
-            max_containers: max,
         }
     }
 
@@ -106,8 +99,8 @@ mod tests {
             memory_bytes: 2 * GB,
         };
         let workers = vec![
-            worker("w1", true, false, 1, 8 * GB, 0, 0, 0, 10), // too few cores
-            worker("w2", true, false, 4, 8 * GB, 0, 0, 0, 10), // fits
+            worker("w1", true, false, 1, 8 * GB, 0, 0), // too few cores
+            worker("w2", true, false, 4, 8 * GB, 0, 0), // fits
         ];
         assert_eq!(schedule(&req, &workers), Some(WorkerName("w2".to_string())));
     }
@@ -119,9 +112,9 @@ mod tests {
             memory_bytes: GB,
         };
         let workers = vec![
-            worker("w1", false, false, 8, 16 * GB, 0, 0, 0, 10), // not ready
-            worker("w2", true, true, 8, 16 * GB, 0, 0, 0, 10),   // cordoned
-            worker("w3", true, false, 8, 16 * GB, 0, 0, 0, 10),  // ok
+            worker("w1", false, false, 8, 16 * GB, 0, 0), // not ready
+            worker("w2", true, true, 8, 16 * GB, 0, 0),   // cordoned
+            worker("w3", true, false, 8, 16 * GB, 0, 0),  // ok
         ];
         assert_eq!(schedule(&req, &workers), Some(WorkerName("w3".to_string())));
     }
@@ -133,17 +126,7 @@ mod tests {
             memory_bytes: GB,
         };
         // 4 cores total, 3 used -> only 1 free, request needs 2.
-        let workers = vec![worker("w1", true, false, 4, 8 * GB, 3, 0, 1, 10)];
-        assert_eq!(schedule(&req, &workers), None);
-    }
-
-    #[test]
-    fn respects_max_container_count() {
-        let req = ResourceRequest {
-            cpu: 1,
-            memory_bytes: GB,
-        };
-        let workers = vec![worker("w1", true, false, 8, 16 * GB, 0, 0, 5, 5)];
+        let workers = vec![worker("w1", true, false, 4, 8 * GB, 3, 0)];
         assert_eq!(schedule(&req, &workers), None);
     }
 
@@ -153,7 +136,7 @@ mod tests {
             cpu: 64,
             memory_bytes: 256 * GB,
         };
-        let workers = vec![worker("w1", true, false, 8, 16 * GB, 0, 0, 0, 10)];
+        let workers = vec![worker("w1", true, false, 8, 16 * GB, 0, 0)];
         assert_eq!(schedule(&req, &workers), None);
     }
 }

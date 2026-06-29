@@ -110,10 +110,9 @@ fn pending_containers(containers: &[StoredObject]) -> Vec<PendingContainer> {
 }
 
 /// Resources currently committed to a worker by containers bound to it.
-fn usage_for(containers: &[StoredObject], worker: &str) -> (ResourceRequest, u32) {
+fn usage_for(containers: &[StoredObject], worker: &str) -> ResourceRequest {
     let mut cpu = 0;
     let mut mem = 0;
-    let mut count = 0;
     for c in containers {
         if c.node_name.as_deref() == Some(worker)
             && matches!(phase(&c.document), Some("Scheduled") | Some("Running"))
@@ -121,16 +120,12 @@ fn usage_for(containers: &[StoredObject], worker: &str) -> (ResourceRequest, u32
             let r = container_request(&c.document);
             cpu += r.cpu;
             mem += r.memory_bytes;
-            count += 1;
         }
     }
-    (
-        ResourceRequest {
-            cpu,
-            memory_bytes: mem,
-        },
-        count,
-    )
+    ResourceRequest {
+        cpu,
+        memory_bytes: mem,
+    }
 }
 
 fn worker_ready(doc: &Value) -> bool {
@@ -150,7 +145,7 @@ fn build_worker_views(workers: &[StoredObject], containers: &[StoredObject]) -> 
     workers
         .iter()
         .map(|w| {
-            let (allocated, running) = usage_for(containers, &w.name);
+            let allocated = usage_for(containers, &w.name);
             WorkerView {
                 name: WorkerName(w.name.clone()),
                 ready: worker_ready(&w.document),
@@ -168,10 +163,6 @@ fn build_worker_views(workers: &[StoredObject], containers: &[StoredObject]) -> 
                         .unwrap_or(0),
                 },
                 allocated,
-                running_containers: running,
-                max_containers: u64_at(&w.document, &["status", "allocatable", "maxContainers"])
-                    .map(|c| c as u32)
-                    .unwrap_or(0),
             }
         })
         .collect()
@@ -187,7 +178,6 @@ pub fn plan_bindings(pending: &[PendingContainer], workers: &[WorkerView]) -> Ve
             if let Some(w) = views.iter_mut().find(|w| w.name.0 == name) {
                 w.allocated.cpu += p.request.cpu;
                 w.allocated.memory_bytes += p.request.memory_bytes;
-                w.running_containers += 1;
             }
             out.push(Binding {
                 container: p.name.clone(),
@@ -429,7 +419,7 @@ mod tests {
 
     const GB: u64 = 1024 * 1024 * 1024;
 
-    fn view(name: &str, cpu: u32, mem: u64, max: u32) -> WorkerView {
+    fn view(name: &str, cpu: u32, mem: u64) -> WorkerView {
         WorkerView {
             name: WorkerName(name.to_string()),
             ready: true,
@@ -442,8 +432,6 @@ mod tests {
                 cpu: 0,
                 memory_bytes: 0,
             },
-            running_containers: 0,
-            max_containers: max,
         }
     }
 
@@ -471,7 +459,7 @@ mod tests {
             },
         ];
         // One worker with 4 cores fits exactly two 2-core containers.
-        let workers = vec![view("w1", 4, 8 * GB, 10)];
+        let workers = vec![view("w1", 4, 8 * GB)];
         let bindings = plan_bindings(&pending, &workers);
         assert_eq!(bindings.len(), 2);
         assert_eq!(bindings[0].worker, "w1");
@@ -524,7 +512,7 @@ mod tests {
             "metadata": { "name": name },
             "spec": { "unschedulable": false },
             "status": {
-                "allocatable": { "cpu": 8, "memoryBytes": 16u64 * GB, "maxContainers": 10 },
+                "allocatable": { "cpu": 8, "memoryBytes": 16u64 * GB },
                 "conditions": [],
             }
         })
