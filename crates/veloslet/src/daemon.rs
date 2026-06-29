@@ -14,6 +14,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::memory::Memory;
+
 /// The launchd label and app-bundle identifier for the worker daemon.
 pub const BUNDLE_ID: &str = "com.velos.veloslet";
 /// Human-facing bundle name shown in the Local Network privacy prompt/list.
@@ -43,6 +45,10 @@ pub struct WorkerConfig {
     pub node: String,
     /// Bootstrap token (`id.secret`) used to register on each start.
     pub token: String,
+    /// Advertised CPU cores. Required; validated against the host at startup.
+    pub cpu: u32,
+    /// Advertised memory (e.g. `"8G"`). Required; validated against the host.
+    pub memory: Memory,
     #[serde(default = "default_reconcile_secs")]
     pub reconcile_secs: u64,
     #[serde(default = "default_heartbeat_secs")]
@@ -162,6 +168,8 @@ mod tests {
             server: "http://192.168.68.60:8088".to_string(),
             node: "node-a".to_string(),
             token: "id.secret".to_string(),
+            cpu: 4,
+            memory: Memory::from_bytes(8 * 1024 * 1024 * 1024),
             reconcile_secs: 5,
             heartbeat_secs: 10,
             lease_secs: 40,
@@ -173,8 +181,12 @@ mod tests {
 
     #[test]
     fn config_applies_interval_defaults_when_omitted() {
-        let cfg: WorkerConfig =
-            serde_json::from_str(r#"{"server":"http://h:1","node":"n","token":"t"}"#).unwrap();
+        let cfg: WorkerConfig = serde_json::from_str(
+            r#"{"server":"http://h:1","node":"n","token":"t","cpu":4,"memory":"8G"}"#,
+        )
+        .unwrap();
+        assert_eq!(cfg.cpu, 4);
+        assert_eq!(cfg.memory.bytes(), 8 * 1024 * 1024 * 1024);
         assert_eq!(cfg.reconcile_secs, 5);
         assert_eq!(cfg.heartbeat_secs, 10);
         assert_eq!(cfg.lease_secs, 40);
