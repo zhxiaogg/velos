@@ -4062,7 +4062,7 @@ checksum = "accd4ea62f7bb7a82fe23066fb0957d48ef677f6eeb8215f372f52e48bb32426"
 
 [[package]]
 name = "velos-auth"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "argon2",
  "chrono",
@@ -4076,7 +4076,7 @@ dependencies = [
 
 [[package]]
 name = "velos-models"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "chrono",
@@ -4089,7 +4089,7 @@ dependencies = [
 
 [[package]]
 name = "velos-runtime"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "async-trait",
  "serde_json",
@@ -4100,11 +4100,11 @@ dependencies = [
 
 [[package]]
 name = "velos-scheduler"
-version = "0.1.1"
+version = "0.1.2"
 
 [[package]]
 name = "velos-server"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -4128,7 +4128,7 @@ dependencies = [
 
 [[package]]
 name = "velos-store"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "rusqlite",
  "serde_json",
@@ -4138,7 +4138,7 @@ dependencies = [
 
 [[package]]
 name = "velos-tests"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "axum",
  "reqwest 0.13.4",
@@ -4153,7 +4153,7 @@ dependencies = [
 
 [[package]]
 name = "velosctl"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "clap",
@@ -4166,7 +4166,7 @@ dependencies = [
 
 [[package]]
 name = "veloslet"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "apple-codesign",
