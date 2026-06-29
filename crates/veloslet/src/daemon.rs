@@ -21,9 +21,10 @@ use crate::memory::Memory;
 /// Reverse-DNS under the project's GitHub namespace (`io.github.<owner>`), which
 /// the owner controls — unlike `com.velos.*`, an unowned domain. macOS pins the
 /// Local Network privacy grant to this identity, so it must be stable.
-pub const BUNDLE_ID: &str = "io.github.zhxiaogg.veloslet";
+pub const BUNDLE_ID: &str = "io.github.zhxiaogg.velos-worker";
 /// Human-facing bundle name shown in the Local Network privacy prompt/list.
-pub const BUNDLE_DISPLAY_NAME: &str = "Velos Worker";
+/// Distinct from any prior name so it is unmistakable in System Settings.
+pub const BUNDLE_DISPLAY_NAME: &str = "Veloslet Worker";
 /// The executable name inside the app bundle (`Velos.app/Contents/MacOS/<name>`).
 pub const BUNDLE_EXECUTABLE: &str = "veloslet";
 
@@ -206,7 +207,7 @@ mod tests {
         ];
         let plist = render_launch_agent(&args, "/usr/local/bin:/usr/bin:/bin", "/o.log", "/e.log");
         assert!(plist.contains("<key>AssociatedBundleIdentifiers</key>"));
-        assert!(plist.contains("<string>io.github.zhxiaogg.veloslet</string>"));
+        assert!(plist.contains("<string>io.github.zhxiaogg.velos-worker</string>"));
         assert!(plist.contains("<string>run</string>"));
         assert!(plist.contains("<string>/home/u/.velos/veloslet.json</string>"));
     }
@@ -214,9 +215,9 @@ mod tests {
     #[test]
     fn info_plist_declares_identity_and_local_network_usage() {
         let info = render_info_plist("0.1.1");
-        assert!(
-            info.contains("<key>CFBundleIdentifier</key><string>io.github.zhxiaogg.veloslet</string>")
-        );
+        assert!(info.contains(
+            "<key>CFBundleIdentifier</key><string>io.github.zhxiaogg.velos-worker</string>"
+        ));
         assert!(info.contains("<key>NSLocalNetworkUsageDescription</key>"));
     }
 

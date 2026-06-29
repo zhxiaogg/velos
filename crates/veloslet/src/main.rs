@@ -227,7 +227,20 @@ async fn run(cfg: WorkerConfig) -> Result<()> {
         "addresses": [],
         "containerRuntimeVersion": runtime_version,
     });
-    let resp = boot.register(&request).await?;
+    // Retry registration in-process instead of exiting on failure. This keeps a
+    // long-lived process alive so macOS can attribute (and the user can approve)
+    // the Local Network privacy prompt — a process that exits immediately on the
+    // first blocked connection tears the prompt's owner down before it can be
+    // approved. It also rides out transient server outages.
+    let resp = loop {
+        match boot.register(&request).await {
+            Ok(resp) => break resp,
+            Err(e) => {
+                tracing::warn!("register failed, retrying in 10s: {e}");
+                tokio::time::sleep(Duration::from_secs(10)).await;
+            }
+        }
+    };
     let credential = resp
         .get("token")
         .and_then(|v| v.as_str())
@@ -369,9 +382,10 @@ fn install(args: InstallArgs) -> Result<()> {
     println!("  config:  {}", paths.config_file.display());
     println!("  agent:   {}", paths.agent_plist.display());
     println!("  logs:    {}", paths.stdout_log.display());
+    let name = daemon::BUNDLE_DISPLAY_NAME;
     println!(
-        "\nApprove the macOS \"Velos Worker wants to access your local network\" prompt\n\
-         when it appears (or enable Velos Worker under System Settings → Privacy &\n\
+        "\nApprove the macOS \"{name} wants to access your local network\" prompt\n\
+         when it appears (or enable {name} under System Settings → Privacy &\n\
          Security → Local Network) — until then the worker cannot reach the server."
     );
     Ok(())
@@ -393,8 +407,9 @@ fn uninstall(args: UninstallArgs) -> Result<()> {
         );
     }
     println!(
-        "Note: the Local Network privacy grant for Velos Worker remains in\n\
-         System Settings → Privacy & Security → Local Network; remove it there if desired."
+        "Note: the Local Network privacy grant for {} remains in\n\
+         System Settings → Privacy & Security → Local Network; remove it there if desired.",
+        daemon::BUNDLE_DISPLAY_NAME
     );
     Ok(())
 }
