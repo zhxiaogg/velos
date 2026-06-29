@@ -53,9 +53,16 @@ cd velos
 make build      # builds the web UI, then all binaries into target/debug/
 ```
 
+To put the CLIs on your `PATH` (release builds into `~/.cargo/bin`):
+
+```bash
+make install-ctl    # install velosctl
+make install-let    # install veloslet (the worker agent)
+```
+
 The rest of this guide uses bare command names (`velos-server`, `velosctl`,
-`veloslet`); if you built from source, run them from `./target/debug/` or add
-that directory to your `PATH`.
+`veloslet`); if you built from source without installing, run them from
+`./target/debug/` or add that directory to your `PATH`.
 
 ## 3. Start the control plane
 
@@ -139,17 +146,18 @@ node-scoped worker credential on first start.
 # As the logged-in admin, mint a bootstrap token and assemble it as `tokenId.secret`.
 TOKEN=$(velosctl token create | jq -r '"\(.tokenId).\(.secret)"')
 
-# Start the worker agent. It registers on first start, then renews its lease.
-veloslet --node "$(hostname -s)" --token "$TOKEN"
+# Run the worker agent in the foreground. It registers on start, then renews its lease.
+veloslet run --server http://127.0.0.1:8080 --node "$(hostname -s)" --token "$TOKEN"
 ```
 
-`veloslet` flags:
+`veloslet run` flags (also accepted via `--config`, see below):
 
 | Flag | Default | Meaning |
 |---|---|---|
-| `--server` | `http://127.0.0.1:8080` | control-plane base URL |
+| `--config` | — | path to a JSON config file holding the settings below |
+| `--server` | *(required)* | control-plane base URL |
 | `--node` | *(required)* | this worker's unique name |
-| `--token` | — | bootstrap token, needed only for first registration |
+| `--token` | *(required)* | bootstrap token used to register on start |
 | `--reconcile-secs` | `5` | how often it reconciles its containers |
 | `--heartbeat-secs` | `10` | how often it renews its lease |
 | `--lease-secs` | `40` | lease duration; not renewed in time → worker goes `NotReady` |
@@ -159,6 +167,35 @@ Within a few seconds the worker reports **Ready** (its lease is fresh):
 ```bash
 velosctl get workers
 ```
+
+### Run as a background daemon
+
+`veloslet install` sets the worker up as a long-running service (a launchd
+**LaunchAgent** on macOS) so it starts at login and restarts on crash:
+
+```bash
+veloslet install --server http://127.0.0.1:8080 --node "$(hostname -s)" --token "$TOKEN"
+```
+
+This writes the settings to `~/.velos/veloslet.json` (mode `0600` — it holds the
+token, so it's kept out of the process arguments), loads the agent, and starts it.
+The agent then runs `veloslet run --config ~/.velos/veloslet.json`. Logs go to
+`~/Library/Logs/veloslet.{out,err}.log`. Remove it with:
+
+```bash
+veloslet uninstall            # stop & unload the agent (keeps config + bundle)
+veloslet uninstall --purge    # also delete the app bundle and config
+```
+
+> **macOS Local Network privacy.** A bare launchd agent is silently blocked from
+> reaching a server on your LAN, because it has no GUI app for macOS to attribute
+> the connection to. To work around this (per Apple TN3179), `install` wraps the
+> binary in a small code-signed app bundle (`~/Applications/Velos.app`) with a
+> bundle identifier and an `NSLocalNetworkUsageDescription`, and references it from
+> the agent via `AssociatedBundleIdentifiers`. The first time it connects, macOS
+> shows a **"Velos Worker wants to access your local network"** prompt — **approve
+> it** (or enable *Velos Worker* under System Settings → Privacy & Security → Local
+> Network). Until then the worker can't reach the server.
 
 ## 6. Use the CLI (velosctl)
 
@@ -287,6 +324,7 @@ Auth endpoints at a glance:
 | Container stuck in `Pending` | Created without `status.phase: "Pending"`, or no worker is `Ready` / has capacity. |
 | Container goes straight to `Failed` | The runtime couldn't run it (image pull failed, or the `container` CLI is missing on the worker). Check the `veloslet` logs. |
 | Worker shows `NotReady` | `veloslet` isn't renewing its lease — confirm it's running and can reach the server. |
+| Daemon (`veloslet install`) logs `error sending request` and never registers | On macOS, the **Local Network** prompt wasn't approved — enable *Velos Worker* under System Settings → Privacy & Security → Local Network (see §5). Note: this grant can't be reset with `tccutil`; it persists per bundle id even after the app is deleted. |
 | Dashboard says "server unreachable" | The server isn't running, or you opened the dev server while the server is down. |
 | `address already in use` on start | Something already holds `:8080` — `lsof -nP -iTCP:8080 -sTCP:LISTEN`. |
 
@@ -296,6 +334,9 @@ Auth endpoints at a glance:
 # Stop the processes (Ctrl-C in their terminals, or:)
 pkill -f velos-server
 pkill -f veloslet
+
+# If the worker was installed as a daemon (macOS), remove the LaunchAgent:
+veloslet uninstall --purge
 
 # Forget the saved CLI credential
 velosctl logout

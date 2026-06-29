@@ -1,4 +1,4 @@
-.PHONY: build web test fmt clippy check run
+.PHONY: build web test fmt clippy check run install-ctl install-let
 
 # Build the web UI into crates/server/ui (embedded by the server) and then
 # the whole workspace. Run `make web` alone to rebuild just the dashboard.
@@ -24,3 +24,11 @@ check:
 
 run:
 	cargo run -p velos-server
+
+# Build the velosctl CLI in release mode and install it to ~/.cargo/bin.
+install-ctl:
+	cargo install --path crates/velosctl --force
+
+# Build the veloslet worker daemon in release mode and install it to ~/.cargo/bin.
+install-let:
+	cargo install --path crates/veloslet --force
