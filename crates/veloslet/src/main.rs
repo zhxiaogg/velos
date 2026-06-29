@@ -12,6 +12,8 @@ use veloslet::host::{detect_host, validate_capacity};
 use veloslet::memory::Memory;
 use veloslet::{ApiClient, run_loop};
 
+mod signing;
+
 /// The Velos worker daemon.
 #[derive(Parser, Debug)]
 #[command(name = "veloslet", version)]
@@ -109,6 +111,9 @@ struct Paths {
     bundle_bin: PathBuf,
     info_plist: PathBuf,
     config_file: PathBuf,
+    /// Persistent self-signed signing identity (cert + key). Survives uninstall
+    /// so the bundle's code-signature stays stable across reinstalls.
+    codesign_dir: PathBuf,
     agent_plist: PathBuf,
     stdout_log: PathBuf,
     stderr_log: PathBuf,
@@ -123,6 +128,7 @@ impl Paths {
             info_plist: bundle_dir.join("Contents/Info.plist"),
             bundle_dir,
             config_file: home.join(".velos/veloslet.json"),
+            codesign_dir: home.join(".velos/codesign"),
             agent_plist: home
                 .join("Library/LaunchAgents")
                 .join(format!("{BUNDLE_ID}.plist")),
@@ -300,14 +306,19 @@ fn install(args: InstallArgs) -> Result<()> {
         0o644,
     )?;
 
-    // 2. Ad-hoc code-sign the bundle so it has a stable identity for TCC.
+    // 2. Code-sign the bundle with a *persistent* self-signed identity so macOS
+    //    keeps the Local Network privacy grant across reinstalls. Ad-hoc signing
+    //    would re-pin the grant to the cdhash and break it on every rebuild.
+    let identity = signing::ensure_identity(&paths.codesign_dir)?;
+    signing::sign_bundle(&paths.bundle_dir, BUNDLE_ID, identity)?;
+    // Verify with the system codesign so a bad signature fails install loudly.
     let bundle = path_str(&paths.bundle_dir)?;
-    let signed = Process::new("codesign")
-        .args(["--force", "--sign", "-", "--identifier", BUNDLE_ID, bundle])
+    let verified = Process::new("codesign")
+        .args(["--verify", "--strict", bundle])
         .status()
-        .context("running codesign")?;
-    if !signed.success() {
-        bail!("codesign failed for {bundle}");
+        .context("running codesign --verify")?;
+    if !verified.success() {
+        bail!("codesign verification failed for {bundle}");
     }
 
     // 3. Persist config (0600 — it holds the bootstrap token).
