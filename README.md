@@ -72,11 +72,13 @@ dashboard do not.)
 ## Development
 
 ```bash
-make build     # build the web UI + workspace
-make web       # rebuild just the web UI (embedded by the server)
-make test      # cargo test --workspace
-make check     # fmt --check + clippy -D warnings + test  (pre-PR gate)
-make run       # run the server
+make build        # build the web UI + workspace
+make web          # rebuild just the web UI (embedded by the server)
+make test         # cargo test --workspace
+make check        # fmt --check + clippy -D warnings + test  (pre-PR gate)
+make run          # run the server
+make install-ctl  # install velosctl into ~/.cargo/bin
+make install-let  # install veloslet into ~/.cargo/bin
 ```
 
 Engineering conventions and the design philosophy live in [`CLAUDE.md`](CLAUDE.md).

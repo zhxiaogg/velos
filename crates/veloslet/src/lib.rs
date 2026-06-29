@@ -6,6 +6,7 @@
 //! liveness heartbeat. The worker is authoritative for container `status`.
 
 pub mod client;
+pub mod daemon;
 pub mod reconcile;
 
 use std::sync::Arc;
