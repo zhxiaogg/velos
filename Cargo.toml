@@ -3,7 +3,7 @@ resolver = "2"
 members = ["crates/*"]
 
 [workspace.package]
-version = "0.1.1"
+version = "0.1.2"
 edition = "2024"
 license = "MIT"
 authors = ["xiaoguang <zhxiaog@outlook.com>"]
@@ -12,12 +12,12 @@ repository = "https://github.com/zhxiaogg/velos"
 # Internal crates carry both `path` (for local builds) and `version` (required so
 # crates.io can record an exact dependency when publishing).
 [workspace.dependencies]
-velos-store = { path = "crates/store", version = "0.1.1" }
-velos-scheduler = { path = "crates/scheduler", version = "0.1.1" }
-velos-runtime = { path = "crates/runtime", version = "0.1.1" }
-velos-auth = { path = "crates/auth", version = "0.1.1" }
-velos-server = { path = "crates/server", version = "0.1.1" }
-veloslet = { path = "crates/veloslet", version = "0.1.1" }
+velos-store = { path = "crates/store", version = "0.1.2" }
+velos-scheduler = { path = "crates/scheduler", version = "0.1.2" }
+velos-runtime = { path = "crates/runtime", version = "0.1.2" }
+velos-auth = { path = "crates/auth", version = "0.1.2" }
+velos-server = { path = "crates/server", version = "0.1.2" }
+veloslet = { path = "crates/veloslet", version = "0.1.2" }
 
 [workspace.lints.clippy]
 unwrap_used = "deny"
